@@ -14,7 +14,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 |---|---|---|
 | Phase 1 | COMPLETED | Project foundation and versioned workflow definitions |
 | Phase 2 | COMPLETED | Workflow state machine, execution, and DAG resolution |
-| Phase 3 | PLANNED | Kafka messaging, transactional outbox, and distributed workers |
+| Phase 3 | IN PROGRESS | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | PLANNED | Retries, timeouts, dead-letter queues, and failure recovery |
 | Phase 5 | PLANNED | Durable scheduling, Redis coordination, and backpressure |
 | Phase 6 | PLANNED | Observability, scalability validation, and resilience testing |
@@ -99,7 +99,11 @@ Exit criteria:
 
 ## Phase 3: Event-driven execution and distributed workers
 
-Status: **PLANNED**
+Status: **IN PROGRESS**
+
+Current milestone: **Slice 3.1 - Kafka foundation and contracts**
+
+Detailed implementation plan: [Phase 3 plan](PHASE_3_PLAN.md)
 
 Planned scope:
 
