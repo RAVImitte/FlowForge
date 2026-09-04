@@ -1,0 +1,16 @@
+package io.flowforge.domain.execution;
+
+public enum ExecutionEventType {
+    WORKFLOW_CREATED,
+    WORKFLOW_STARTED,
+    WORKFLOW_CANCELLATION_REQUESTED,
+    WORKFLOW_SUCCEEDED,
+    WORKFLOW_FAILED,
+    WORKFLOW_CANCELLED,
+    TASK_READY,
+    TASK_STARTED,
+    TASK_SUCCEEDED,
+    TASK_FAILED,
+    TASK_TIMED_OUT,
+    TASK_CANCELLED
+}

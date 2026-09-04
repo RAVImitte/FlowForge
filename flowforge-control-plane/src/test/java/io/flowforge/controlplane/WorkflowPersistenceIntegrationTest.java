@@ -22,7 +22,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest
+@SpringBootTest(properties = "flowforge.execution.dispatch-enabled=false")
 @Testcontainers(disabledWithoutDocker = true)
 class WorkflowPersistenceIntegrationTest {
     @Container

@@ -34,4 +34,9 @@ management:
 info:
   app:
     name: FlowForge
-    phase: 1
+    phase: 2
+
+flowforge:
+  execution:
+    dispatch-enabled: ${FLOWFORGE_DISPATCH_ENABLED:true}
+    dispatch-interval-ms: ${FLOWFORGE_DISPATCH_INTERVAL_MS:250}

@@ -1,5 +1,8 @@
 package io.flowforge.controlplane.adapter.in.web;
 
+import io.flowforge.application.execution.ExecutionConflictException;
+import io.flowforge.application.execution.ExecutionNotFoundException;
+import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.application.workflow.WorkflowConflictException;
 import io.flowforge.application.workflow.WorkflowNotFoundException;
 import io.flowforge.domain.workflow.DomainValidationException;
@@ -16,6 +19,30 @@ import java.util.List;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(ExecutionNotFoundException.class)
+    ResponseEntity<ProblemDetail> executionNotFound(
+            ExecutionNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.NOT_FOUND, "EXECUTION_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(WorkflowNotPublishedException.class)
+    ResponseEntity<ProblemDetail> workflowNotPublished(
+            WorkflowNotPublishedException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.CONFLICT, "WORKFLOW_NOT_PUBLISHED", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ExecutionConflictException.class)
+    ResponseEntity<ProblemDetail> executionConflict(
+            ExecutionConflictException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.CONFLICT, "EXECUTION_CONFLICT", exception.getMessage(), request);
+    }
+
     @ExceptionHandler(WorkflowNotFoundException.class)
     ResponseEntity<ProblemDetail> notFound(WorkflowNotFoundException exception, HttpServletRequest request) {
         return problem(HttpStatus.NOT_FOUND, "WORKFLOW_NOT_FOUND", exception.getMessage(), request);

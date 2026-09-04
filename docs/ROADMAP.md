@@ -13,7 +13,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 | Phase | Status | Scope |
 |---|---|---|
 | Phase 1 | COMPLETED | Project foundation and versioned workflow definitions |
-| Phase 2 | PLANNED | Workflow state machine, execution, and DAG resolution |
+| Phase 2 | COMPLETED | Workflow state machine, execution, and DAG resolution |
 | Phase 3 | PLANNED | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | PLANNED | Retries, timeouts, dead-letter queues, and failure recovery |
 | Phase 5 | PLANNED | Durable scheduling, Redis coordination, and backpressure |
@@ -44,12 +44,35 @@ Completed capabilities:
 Verification notes:
 
 - The Maven reactor builds successfully.
-- Seven tests pass on the current development machine.
-- Two PostgreSQL Testcontainers tests are present but skip locally when Docker is unavailable; CI is intended to run them with Docker.
+- Both Phase 1 PostgreSQL Testcontainers tests pass locally against Rancher Desktop's Moby engine.
 
 ## Phase 2: State machine and DAG execution
 
-Status: **PLANNED**
+Status: **COMPLETED**
+
+Completed capabilities:
+
+- Immutable `WorkflowRun` and `TaskRun` domain aggregates
+- Explicit, guarded workflow and task transition matrices
+- Terminal-state, cancellation, timeout, timestamp, and optimistic state-version invariants
+- Focused domain tests for valid and invalid transitions
+- Flyway-managed `workflow_execution`, `task_execution`, `task_attempt`, and ordered `execution_event` persistence
+- Immutable references from executions to the exact published workflow version
+- Idempotent execution starts enforced by PostgreSQL
+- Linear, fan-out, fan-in, and mixed-DAG readiness resolution
+- Bounded, horizontally safe ready-task claims using `FOR UPDATE SKIP LOCKED`
+- Workflow-scoped locking for concurrent and duplicate completion safety
+- Failure propagation and coordinated workflow cancellation
+- Start, inspect, and cancel execution APIs
+- In-process dispatcher port with deterministic `NOOP`, `DELAY`, and `FAIL` handlers
+- Startup and scheduled recovery of durable ready work
+- Domain, application, web, handler, recovery, persistence, and concurrency tests
+
+Verification notes:
+
+- The complete Maven reactor verification succeeds with 43 tests passing and no skipped tests.
+- All eight PostgreSQL Testcontainers tests pass locally against Rancher Desktop's Moby engine, including the six Phase 2 execution and concurrency scenarios.
+- Kafka, distributed workers, retries, leases, and Redis remain intentionally deferred to later phases.
 
 Planned scope:
 
