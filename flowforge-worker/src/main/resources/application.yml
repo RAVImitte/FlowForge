@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: flowforge-worker
+  kafka:
+    bootstrap-servers: ${FLOWFORGE_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: ${FLOWFORGE_WORKER_GROUP:flowforge-workers-v1}
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: manual_immediate
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+  datasource:
+    url: ${FLOWFORGE_WORKER_DB_URL:${FLOWFORGE_DB_URL:jdbc:postgresql://localhost:5432/flowforge}}
+    username: ${FLOWFORGE_WORKER_DB_USERNAME:${FLOWFORGE_DB_USERNAME:flowforge}}
+    password: ${FLOWFORGE_WORKER_DB_PASSWORD:${FLOWFORGE_DB_PASSWORD:flowforge}}
+    hikari:
+      maximum-pool-size: ${FLOWFORGE_WORKER_DB_POOL_SIZE:10}
+      connection-timeout: 3000
+  flyway:
+    locations: classpath:db/worker-migration
+    table: worker_flyway_schema_history
+    validate-migration-naming: true
+    baseline-on-migrate: true
+    baseline-version: 0
+
+server:
+  port: ${WORKER_PORT:8081}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+
+flowforge:
+  kafka:
+    enabled: ${FLOWFORGE_KAFKA_ENABLED:true}
+  worker:
+    id: ${FLOWFORGE_WORKER_ID:${spring.application.name}-${random.uuid}}
+    consumer-group: ${FLOWFORGE_WORKER_GROUP:flowforge-workers-v1}
+    result-publisher-enabled: ${FLOWFORGE_WORKER_RESULT_PUBLISHER_ENABLED:true}
+    kafka-health-timeout: ${FLOWFORGE_KAFKA_HEALTH_TIMEOUT:3s}
+    execution:
+      concurrency: ${FLOWFORGE_WORKER_CONCURRENCY:1}
+      result-batch-size: ${FLOWFORGE_WORKER_RESULT_BATCH_SIZE:100}
+      result-poll-interval-ms: ${FLOWFORGE_WORKER_RESULT_POLL_INTERVAL_MS:250}
+      result-lease-duration: ${FLOWFORGE_WORKER_RESULT_LEASE_DURATION:30s}
+      result-publish-timeout: ${FLOWFORGE_WORKER_RESULT_PUBLISH_TIMEOUT:10s}

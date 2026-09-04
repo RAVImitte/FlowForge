@@ -1,0 +1,101 @@
+package io.flowforge.controlplane.adapter.in.messaging;
+
+import io.flowforge.application.execution.InboundTaskResult;
+import io.flowforge.application.execution.TaskOutcome;
+import io.flowforge.application.execution.TaskResultIngestion;
+import io.flowforge.application.execution.TaskResultIngestionOutcome;
+import io.flowforge.messaging.FlowForgeTopics;
+import io.flowforge.messaging.MessageEnvelope;
+import io.flowforge.messaging.TaskResultV1;
+import io.micrometer.core.instrument.MeterRegistry;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.kafka.support.Acknowledgment;
+import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+
+import java.time.Clock;
+
+@Component
+@ConditionalOnProperty(prefix = "flowforge.kafka", name = "enabled", havingValue = "true")
+@ConditionalOnProperty(prefix = "flowforge.results", name = "consumer-enabled", havingValue = "true")
+public class TaskResultConsumer {
+    private static final TypeReference<MessageEnvelope<TaskResultV1>> RESULT_TYPE = new TypeReference<>() {
+    };
+
+    private final ObjectMapper objectMapper;
+    private final TaskResultIngestion ingestion;
+    private final Clock clock;
+    private final MeterRegistry meters;
+
+    public TaskResultConsumer(
+            ObjectMapper objectMapper,
+            TaskResultIngestion ingestion,
+            Clock clock,
+            MeterRegistry meters
+    ) {
+        this.objectMapper = objectMapper;
+        this.ingestion = ingestion;
+        this.clock = clock;
+        this.meters = meters;
+    }
+
+    @KafkaListener(
+            topics = FlowForgeTopics.TASK_RESULTS_V1,
+            groupId = "${flowforge.results.consumer-group:flowforge-control-plane-results-v1}"
+    )
+    public void consume(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
+        try {
+            MessageEnvelope<TaskResultV1> envelope = decode(record.value());
+            validate(record, envelope);
+            TaskResultV1 payload = envelope.payload();
+            TaskResultIngestionOutcome outcome = ingestion.ingest(
+                    new InboundTaskResult(
+                            envelope.eventId(),
+                            payload.workflowExecutionId(),
+                            payload.taskExecutionId(),
+                            payload.taskKey(),
+                            payload.expectedStateVersion(),
+                            payload.attemptNumber(),
+                            TaskOutcome.valueOf(payload.outcome().name()),
+                            payload.errorCode(),
+                            payload.errorMessage()
+                    ),
+                    record.value(),
+                    clock.instant()
+            );
+            meters.counter("flowforge.results.consumed", "outcome", outcome.name()).increment();
+            acknowledgment.acknowledge();
+        } catch (RuntimeException failure) {
+            meters.counter("flowforge.results.failures").increment();
+            throw failure;
+        }
+    }
+
+    private MessageEnvelope<TaskResultV1> decode(String payload) {
+        try {
+            return objectMapper.readValue(payload, RESULT_TYPE);
+        } catch (JacksonException exception) {
+            throw new IllegalArgumentException("Task result is not valid JSON", exception);
+        }
+    }
+
+    private static void validate(
+            ConsumerRecord<String, String> record,
+            MessageEnvelope<TaskResultV1> envelope
+    ) {
+        if (!TaskResultV1.EVENT_TYPE.equals(envelope.eventType())
+                || envelope.schemaVersion() != TaskResultV1.SCHEMA_VERSION) {
+            throw new IllegalArgumentException("Unsupported task-result contract version");
+        }
+        if (!envelope.correlationId().equals(envelope.payload().workflowExecutionId())) {
+            throw new IllegalArgumentException("Task-result correlation ID does not match workflow execution");
+        }
+        if (record.key() == null || !record.key().equals(envelope.payload().workflowExecutionId().toString())) {
+            throw new IllegalArgumentException("Task-result record key does not match workflow execution");
+        }
+    }
+}

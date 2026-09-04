@@ -48,6 +48,8 @@ The worker uses a durable command inbox and result outbox. This allows a restart
 
 ### Slice 3.1: Kafka foundation and contracts
 
+Status: **COMPLETED**
+
 - Add `flowforge-messaging` and `flowforge-worker` modules.
 - Add the Spring Boot Kafka starter managed by Spring Boot 4.1.
 - Add a single-node KRaft broker to the local Compose environment.
@@ -59,6 +61,8 @@ Exit: the control plane and worker start against local Kafka, topics exist, and 
 
 ### Slice 3.2: Control-plane transactional outbox
 
+Status: **COMPLETED**
+
 - Add Flyway tables for the control-plane outbox.
 - Write task commands and lifecycle events in the same transactions as state changes.
 - Claim unpublished rows in bounded batches using `FOR UPDATE SKIP LOCKED`.
@@ -68,6 +72,8 @@ Exit: the control plane and worker start against local Kafka, topics exist, and 
 Exit: a committed task transition always has a recoverable outbox record, and crash/replay tests demonstrate possible duplicate delivery without message loss.
 
 ### Slice 3.3: Distributed worker
+
+Status: **COMPLETED**
 
 - Consume task commands as the `flowforge-workers-v1` consumer group.
 - Persist a durable worker inbox before execution.
@@ -80,6 +86,8 @@ Exit: handlers run outside the control plane and duplicate commands do not repea
 
 ### Slice 3.4: Result ingestion and DAG advancement
 
+Status: **COMPLETED**
+
 - Consume task results as the `flowforge-control-plane-results-v1` group.
 - Insert the result inbox record and apply task completion atomically.
 - Reject stale or conflicting task state versions.
@@ -90,6 +98,8 @@ Exit: linear, fan-out, fan-in, failure, and cancellation workflows complete thro
 
 ### Slice 3.5: Recovery, scaling, and cutover
 
+Status: **COMPLETED**
+
 - Feature-flag the in-process Phase 2 dispatcher and default production mode to Kafka.
 - Add PostgreSQL and Kafka Testcontainers integration tests.
 - Add restart tests for outbox publishers, consumers, and workers.
@@ -98,6 +108,8 @@ Exit: linear, fan-out, fan-in, failure, and cancellation workflows complete thro
 - Record the final architecture in ADR-003.
 
 Exit: the full Maven suite passes, no Kafka integration test is skipped in the verified environment, and Phase 3 exit criteria in the roadmap are satisfied.
+
+Verified with 88 passing tests and no failures, errors, or skips against PostgreSQL and Kafka Testcontainers.
 
 ## Deferred deliberately
 

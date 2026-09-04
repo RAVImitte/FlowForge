@@ -16,8 +16,10 @@
     <description>Distributed workflow and job orchestration platform</description>
     <modules>
         <module>flowforge-domain</module>
+        <module>flowforge-messaging</module>
         <module>flowforge-application</module>
         <module>flowforge-control-plane</module>
+        <module>flowforge-worker</module>
     </modules>
     <properties>
         <java.version>21</java.version>

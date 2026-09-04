@@ -14,7 +14,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 |---|---|---|
 | Phase 1 | COMPLETED | Project foundation and versioned workflow definitions |
 | Phase 2 | COMPLETED | Workflow state machine, execution, and DAG resolution |
-| Phase 3 | IN PROGRESS | Kafka messaging, transactional outbox, and distributed workers |
+| Phase 3 | COMPLETED | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | PLANNED | Retries, timeouts, dead-letter queues, and failure recovery |
 | Phase 5 | PLANNED | Durable scheduling, Redis coordination, and backpressure |
 | Phase 6 | PLANNED | Observability, scalability validation, and resilience testing |
@@ -99,11 +99,60 @@ Exit criteria:
 
 ## Phase 3: Event-driven execution and distributed workers
 
-Status: **IN PROGRESS**
+Status: **COMPLETED**
 
-Current milestone: **Slice 3.1 - Kafka foundation and contracts**
+Completed milestones: **Slices 3.1-3.5 - Kafka foundation through production cutover**
 
 Detailed implementation plan: [Phase 3 plan](PHASE_3_PLAN.md)
+
+Completed capabilities:
+
+- Framework-light `flowforge-messaging` module with immutable V1 envelopes and payload contracts
+- Versioned task-command, task-result, and execution-event topic names
+- JSON round-trip and backward-compatibility fixture tests
+- Spring-managed Kafka topic provisioning with configurable partitions and replication factor
+- Single-node Kafka 4.3 KRaft local environment
+- Independently deployable `flowforge-worker` Spring Boot module
+- Worker identity and live Kafka cluster health indicators
+- Real Kafka integration tests for topic provisioning and worker connectivity
+- Flyway-managed control-plane transactional outbox
+- Atomic task-command and execution-event creation alongside state transitions
+- Stable event IDs reused from the durable execution-event journal
+- Bounded multi-instance claims using `FOR UPDATE SKIP LOCKED`
+- Short claim leases and token-fenced acknowledgements for publisher crash recovery
+- Kafka publisher with idempotent producer configuration, correlation headers, and explicit acknowledgements
+- Startup and scheduled recovery of pending or expired outbox work
+- Metrics for publication, failure, uncertain/stale acknowledgements, and pending backlog
+- PostgreSQL concurrency tests and end-to-end PostgreSQL-to-Kafka publication tests
+- Durable worker command inbox persisted before handler execution
+- Worker-side application ports with deterministic `NOOP`, `DELAY`, and `FAIL` handlers
+- Manual Kafka acknowledgement only after durable command completion
+- Atomic worker completion and task-result outbox creation
+- Scheduled task-result publication with stable event IDs and recoverable claim leases
+- Completed-command deduplication that reuses the stored result without rerunning the handler
+- Kafka consumer-group coordination verified with two live workers sharing six partitions
+- Flyway-managed control-plane result inbox with event-ID uniqueness and payload reuse detection
+- Manual result-consumer acknowledgement only after the PostgreSQL transaction commits
+- Atomic result-inbox insertion, task completion, DAG release, lifecycle events, and downstream command creation
+- Workflow-scoped downstream claims that cannot consume another workflow's dispatch capacity
+- Stale state-version, task-identity, attempt, and conflicting event rejection
+- Idempotent handling for repeated event IDs and independently duplicated equivalent results
+- Result-ingestion metrics for applied, redundant, duplicate, and failed records
+- Real Kafka fan-out/fan-in completion through the result consumer
+- Production profile that selects the complete distributed topology and disables in-process dispatch
+- Startup validation for conflicting, incomplete, or Kafka-less distributed configurations
+- Independent Flyway histories that support either service starting first against a shared schema
+- Cross-process restart recovery for pending control-plane commands, worker results, and offline result consumers
+- ADR-003 documentation of delivery guarantees, partition keys, scaling limits, cutover, and failure semantics
+
+Verification notes:
+
+- The complete Maven reactor succeeds with 88 tests passing and no skipped tests.
+- PostgreSQL tests verify atomic state/outbox writes, expired-lease recovery, token fencing, and disjoint concurrent claims.
+- Kafka tests verify real command/event publication, keys, headers, versioned payloads, acknowledgements, and durable published state.
+- Worker tests verify duplicate command suppression, durable result publication, uncertain-ack recovery, and two-instance partition sharing.
+- Result-ingestion tests verify atomic DAG advancement, stale-result rollback, concurrent deduplication, failure, cancellation, and Kafka fan-out/fan-in completion.
+- Restart testing verifies pending control-plane commands, durable worker results, and offline result consumption across replacement processes.
 
 Planned scope:
 

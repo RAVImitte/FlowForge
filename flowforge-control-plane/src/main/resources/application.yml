@@ -10,6 +10,23 @@ spring:
       connection-timeout: 3000
   flyway:
     validate-migration-naming: true
+    baseline-on-migrate: true
+    baseline-version: 0
+  kafka:
+    bootstrap-servers: ${FLOWFORGE_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: manual_immediate
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
   jackson:
     default-property-inclusion: non_null
 
@@ -34,9 +51,28 @@ management:
 info:
   app:
     name: FlowForge
-    phase: 2
+    phase: 3
 
 flowforge:
+  kafka:
+    enabled: ${FLOWFORGE_KAFKA_ENABLED:false}
+    topics:
+      partitions: ${FLOWFORGE_KAFKA_TOPIC_PARTITIONS:6}
+      replication-factor: ${FLOWFORGE_KAFKA_TOPIC_REPLICATION_FACTOR:1}
+  outbox:
+    publisher-enabled: ${FLOWFORGE_OUTBOX_PUBLISHER_ENABLED:false}
+    command-dispatch-enabled: ${FLOWFORGE_OUTBOX_COMMAND_DISPATCH_ENABLED:false}
+    batch-size: ${FLOWFORGE_OUTBOX_BATCH_SIZE:100}
+    poll-interval-ms: ${FLOWFORGE_OUTBOX_POLL_INTERVAL_MS:250}
+    command-dispatch-interval-ms: ${FLOWFORGE_OUTBOX_COMMAND_DISPATCH_INTERVAL_MS:250}
+    lease-duration: ${FLOWFORGE_OUTBOX_LEASE_DURATION:30s}
+    publish-timeout: ${FLOWFORGE_OUTBOX_PUBLISH_TIMEOUT:10s}
+    instance-id: ${FLOWFORGE_INSTANCE_ID:${spring.application.name}-${random.uuid}}
   execution:
     dispatch-enabled: ${FLOWFORGE_DISPATCH_ENABLED:true}
     dispatch-interval-ms: ${FLOWFORGE_DISPATCH_INTERVAL_MS:250}
+    require-active-dispatcher: false
+  results:
+    consumer-enabled: ${FLOWFORGE_RESULT_CONSUMER_ENABLED:false}
+    consumer-group: ${FLOWFORGE_RESULT_CONSUMER_GROUP:flowforge-control-plane-results-v1}
+    enqueue-batch-size: ${FLOWFORGE_RESULT_ENQUEUE_BATCH_SIZE:1000}

@@ -1,0 +1,11 @@
+flowforge:
+  kafka:
+    enabled: true
+  outbox:
+    publisher-enabled: true
+    command-dispatch-enabled: true
+  execution:
+    dispatch-enabled: false
+    require-active-dispatcher: true
+  results:
+    consumer-enabled: true

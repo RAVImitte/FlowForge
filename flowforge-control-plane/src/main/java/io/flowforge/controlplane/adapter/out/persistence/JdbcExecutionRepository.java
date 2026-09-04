@@ -2,6 +2,7 @@ package io.flowforge.controlplane.adapter.out.persistence;
 
 import io.flowforge.application.execution.ExecutionConflictException;
 import io.flowforge.application.execution.ExecutionNotFoundException;
+import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskCompletion;
 import io.flowforge.application.execution.TaskCompletionResult;
@@ -19,6 +20,10 @@ import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRun;
 import io.flowforge.domain.execution.WorkflowRunStatus;
 import io.flowforge.domain.workflow.TaskDependency;
+import io.flowforge.messaging.ExecutionEventV1;
+import io.flowforge.messaging.FlowForgeTopics;
+import io.flowforge.messaging.MessageEnvelope;
+import io.flowforge.messaging.TaskCommandV1;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,7 +42,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 @Repository
-public class JdbcExecutionRepository implements ExecutionRepository {
+public class JdbcExecutionRepository implements ExecutionRepository, DurableTaskQueue {
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
 
@@ -149,7 +154,30 @@ public class JdbcExecutionRepository implements ExecutionRepository {
     @Override
     @Transactional
     public List<TaskWorkItem> claimReadyTasks(int limit, Instant now) {
-        List<ClaimCandidate> candidates = jdbc.sql("""
+        return claimCandidates(limit, null).stream().map(candidate -> claim(candidate, now, false)).toList();
+    }
+
+    @Override
+    @Transactional
+    public int enqueueReadyTasks(int limit, Instant now) {
+        List<ClaimCandidate> candidates = claimCandidates(limit, null);
+        candidates.forEach(candidate -> claim(candidate, now, true));
+        return candidates.size();
+    }
+
+    @Override
+    @Transactional
+    public int enqueueReadyTasks(UUID workflowExecutionId, int limit, Instant now) {
+        List<ClaimCandidate> candidates = claimCandidates(limit, workflowExecutionId);
+        candidates.forEach(candidate -> claim(candidate, now, true));
+        return candidates.size();
+    }
+
+    private List<ClaimCandidate> claimCandidates(int limit, UUID workflowExecutionId) {
+        String workflowFilter = workflowExecutionId == null
+                ? ""
+                : " AND te.workflow_execution_id = :workflowExecutionId\n";
+        var query = jdbc.sql("""
                 SELECT te.id, te.workflow_execution_id, te.task_key, te.status, te.state_version,
                        te.created_at, te.started_at, te.finished_at,
                        wt.task_type, wt.configuration,
@@ -163,20 +191,20 @@ public class JdbcExecutionRepository implements ExecutionRepository {
                    AND wt.task_key = te.task_key
                  WHERE te.status = 'READY'
                    AND we.status = 'RUNNING'
+                """ + workflowFilter + """
                  ORDER BY te.created_at, te.id
                  FOR UPDATE OF we, te SKIP LOCKED
                  LIMIT :limit
                 """)
-                .param("limit", limit)
-                .query((rs, rowNum) -> new ClaimCandidate(
+                .param("limit", limit);
+        if (workflowExecutionId != null) query = query.param("workflowExecutionId", workflowExecutionId);
+        return query.query((rs, rowNum) -> new ClaimCandidate(
                         mapTaskRun(rs),
                         rs.getString("task_type"),
                         fromJson(rs.getString("configuration")),
                         rs.getInt("attempt_number")
                 ))
                 .list();
-
-        return candidates.stream().map(candidate -> claim(candidate, now)).toList();
     }
 
     @Override
@@ -260,7 +288,7 @@ public class JdbcExecutionRepository implements ExecutionRepository {
         }
     }
 
-    private TaskWorkItem claim(ClaimCandidate candidate, Instant now) {
+    private TaskWorkItem claim(ClaimCandidate candidate, Instant now, boolean enqueueCommand) {
         TaskRun current = candidate.task();
         TaskRun running = current.transitionTo(TaskRunStatus.RUNNING, now);
         updateTask(current, running);
@@ -282,7 +310,7 @@ public class JdbcExecutionRepository implements ExecutionRepository {
                 running.status().name(),
                 now
         );
-        return new TaskWorkItem(
+        TaskWorkItem workItem = new TaskWorkItem(
                 running.workflowRunId(),
                 running.id(),
                 running.taskKey(),
@@ -291,6 +319,8 @@ public class JdbcExecutionRepository implements ExecutionRepository {
                 running.stateVersion(),
                 candidate.attemptNumber()
         );
+        if (enqueueCommand) insertTaskCommand(workItem, now);
+        return workItem;
     }
 
     private WorkflowRun advanceWorkflow(WorkflowRun workflow, TaskRun completed, Instant now) {
@@ -648,6 +678,7 @@ public class JdbcExecutionRepository implements ExecutionRepository {
             String toStatus,
             Instant occurredAt
     ) {
+        UUID eventId = UUID.randomUUID();
         jdbc.sql("""
                 INSERT INTO execution_event(
                     id, workflow_execution_id, task_execution_id, event_type,
@@ -657,13 +688,106 @@ public class JdbcExecutionRepository implements ExecutionRepository {
                     :fromStatus, :toStatus, :occurredAt
                 )
                 """)
-                .param("id", UUID.randomUUID())
+                .param("id", eventId)
                 .param("executionId", executionId)
                 .param("taskId", taskId)
                 .param("eventType", type.name())
                 .param("fromStatus", fromStatus)
                 .param("toStatus", toStatus)
                 .param("occurredAt", timestamp(occurredAt))
+                .update();
+        MessageEnvelope<ExecutionEventV1> envelope = new MessageEnvelope<>(
+                eventId,
+                ExecutionEventV1.EVENT_TYPE,
+                ExecutionEventV1.SCHEMA_VERSION,
+                occurredAt,
+                executionId,
+                new ExecutionEventV1(executionId, taskId, type.name(), fromStatus, toStatus)
+        );
+        insertOutbox(
+                eventId,
+                executionId,
+                taskId,
+                eventId,
+                "EXECUTION_EVENT",
+                FlowForgeTopics.EXECUTION_EVENTS_V1,
+                executionId.toString(),
+                envelope.eventType(),
+                envelope.schemaVersion(),
+                toJson(envelope),
+                occurredAt
+        );
+    }
+
+    private void insertTaskCommand(TaskWorkItem workItem, Instant occurredAt) {
+        UUID eventId = UUID.randomUUID();
+        MessageEnvelope<TaskCommandV1> envelope = new MessageEnvelope<>(
+                eventId,
+                TaskCommandV1.EVENT_TYPE,
+                TaskCommandV1.SCHEMA_VERSION,
+                occurredAt,
+                workItem.workflowRunId(),
+                new TaskCommandV1(
+                        workItem.workflowRunId(),
+                        workItem.taskRunId(),
+                        workItem.taskKey(),
+                        workItem.taskType(),
+                        workItem.configuration(),
+                        workItem.stateVersion(),
+                        workItem.attemptNumber()
+                )
+        );
+        insertOutbox(
+                eventId,
+                workItem.workflowRunId(),
+                workItem.taskRunId(),
+                null,
+                "TASK_COMMAND",
+                FlowForgeTopics.TASK_COMMANDS_V1,
+                workItem.taskRunId().toString(),
+                envelope.eventType(),
+                envelope.schemaVersion(),
+                toJson(envelope),
+                occurredAt
+        );
+    }
+
+    private void insertOutbox(
+            UUID id,
+            UUID executionId,
+            UUID taskId,
+            UUID sourceEventId,
+            String messageKind,
+            String topic,
+            String recordKey,
+            String eventType,
+            int schemaVersion,
+            String payload,
+            Instant createdAt
+    ) {
+        jdbc.sql("""
+                INSERT INTO control_plane_outbox(
+                    id, workflow_execution_id, task_execution_id, source_event_id,
+                    message_kind, topic, record_key, event_type, schema_version,
+                    payload, status, available_at, created_at
+                ) VALUES (
+                    :id, :executionId, :taskId, :sourceEventId,
+                    :messageKind, :topic, :recordKey, :eventType, :schemaVersion,
+                    CAST(:payload AS jsonb), 'PENDING', :availableAt, :createdAt
+                )
+                """)
+                .param("id", id)
+                .param("executionId", executionId)
+                .param("taskId", taskId)
+                .param("sourceEventId", sourceEventId)
+                .param("messageKind", messageKind)
+                .param("topic", topic)
+                .param("recordKey", recordKey)
+                .param("eventType", eventType)
+                .param("schemaVersion", schemaVersion)
+                .param("payload", payload)
+                .param("availableAt", timestamp(createdAt))
+                .param("createdAt", timestamp(createdAt))
                 .update();
     }
 
@@ -700,6 +824,14 @@ public class JdbcExecutionRepository implements ExecutionRepository {
             return configuration;
         } catch (JacksonException exception) {
             throw new IllegalStateException("Stored task configuration is invalid", exception);
+        }
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Could not serialize outbox message", exception);
         }
     }
 
