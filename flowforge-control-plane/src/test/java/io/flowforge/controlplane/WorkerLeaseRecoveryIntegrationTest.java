@@ -72,6 +72,8 @@ class WorkerLeaseRecoveryIntegrationTest {
     @BeforeEach
     void removeExecutions() {
         jdbc.sql("DELETE FROM workflow_execution").update();
+        jdbc.sql("DELETE FROM coordination_permit WHERE resource_key LIKE 'concurrency:%'").update();
+        jdbc.sql("DELETE FROM coordination_resource WHERE resource_key LIKE 'concurrency:%'").update();
     }
 
     @Test
@@ -103,6 +105,7 @@ class WorkerLeaseRecoveryIntegrationTest {
         assertThat(executions.findById(first.workflowRunId()).orElseThrow().events())
                 .extracting(event -> event.type())
                 .contains(ExecutionEventType.TASK_LEASE_EXPIRED, ExecutionEventType.TASK_RETRY_SCHEDULED);
+        assertThat(activeTaskPermits()).isZero();
 
         assertThat(queue.releaseDueRetries(10, TIME.plusSeconds(31))).isEqualTo(1);
         assertThat(queue.enqueueReadyTasks(first.workflowRunId(), 10, TIME.plusSeconds(31))).isEqualTo(1);
@@ -160,7 +163,7 @@ class WorkerLeaseRecoveryIntegrationTest {
         );
         WorkflowDefinition created = workflows.create(new WorkflowDraft(
                 "Lease test", null,
-                List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy)),
+                List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy, 1)),
                 List.of()
         ));
         WorkflowDefinition published = workflows.publish(created.id(), created.lockVersion());
@@ -196,5 +199,13 @@ class WorkerLeaseRecoveryIntegrationTest {
                 .param("taskId", taskId)
                 .query(Instant.class)
                 .single();
+    }
+
+    private long activeTaskPermits() {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM coordination_permit
+                 WHERE resource_key LIKE 'concurrency:task:%'
+                   AND status = 'ACTIVE'
+                """).query(Long.class).single();
     }
 }

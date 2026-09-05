@@ -4,11 +4,20 @@ import io.flowforge.application.coordination.CoordinationPermit;
 import io.flowforge.application.coordination.CoordinationPermitLedger;
 import io.flowforge.application.coordination.CoordinationPermitService;
 import io.flowforge.application.coordination.EphemeralPermitStore;
+import io.flowforge.application.execution.ConcurrencyPermitRecovery;
+import io.flowforge.application.execution.ExecutionRepository;
+import io.flowforge.application.execution.TaskCompletion;
+import io.flowforge.application.execution.TaskResult;
+import io.flowforge.application.workflow.WorkflowService;
 import io.flowforge.controlplane.adapter.out.coordination.RedisCoordinationKeyspace;
+import io.flowforge.domain.workflow.TaskDefinition;
+import io.flowforge.domain.workflow.WorkflowDefinition;
+import io.flowforge.domain.workflow.WorkflowDraft;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -21,6 +30,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -72,6 +82,46 @@ class CoordinationIntegrationTest {
 
     @Autowired
     RedisCoordinationKeyspace keyspace;
+
+    @Autowired
+    WorkflowService workflows;
+
+    @Autowired
+    ExecutionRepository executions;
+
+    @Autowired
+    ConcurrencyPermitRecovery concurrencyRecovery;
+
+    @Autowired
+    JdbcClient jdbc;
+
+    @Test
+    void mirrorsExecutionPermitsAndRebuildsThemFromActiveDatabaseState() {
+        WorkflowDefinition draft = workflows.create(new WorkflowDraft(
+                "Redis mirrored execution",
+                null,
+                List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of())),
+                List.of(),
+                1
+        ));
+        WorkflowDefinition published = workflows.publish(draft.id(), draft.lockVersion());
+        var execution = executions.start(published.id(), "redis-execution-" + UUID.randomUUID(), Instant.now());
+        UUID versionId = jdbc.sql("SELECT workflow_version_id FROM workflow_execution WHERE id = :id")
+                .param("id", execution.workflow().id())
+                .query(UUID.class)
+                .single();
+        String resource = "concurrency:workflow-version:" + versionId;
+        assertThat(store.activeCount(resource, Instant.now())).isEqualTo(1);
+
+        redis.getConnectionFactory().getConnection().serverCommands().flushDb();
+        assertThat(store.activeCount(resource, Instant.now())).isZero();
+        concurrencyRecovery.reconcileConcurrencyPermits(100, Instant.now());
+        assertThat(store.activeCount(resource, Instant.now())).isEqualTo(1);
+
+        var task = executions.claimReadyTasks(1, Instant.now()).getFirst();
+        executions.completeTask(TaskCompletion.from(task, TaskResult.succeeded()), Instant.now());
+        assertThat(store.activeCount(resource, Instant.now())).isZero();
+    }
 
     @Test
     void durableLedgerEnforcesCapacityAndIdempotentHolderOwnership() {

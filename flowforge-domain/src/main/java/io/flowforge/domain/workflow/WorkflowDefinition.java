@@ -12,6 +12,7 @@ public record WorkflowDefinition(
         WorkflowVersionStatus versionStatus,
         String name,
         String description,
+        Integer maxConcurrentExecutions,
         List<TaskDefinition> tasks,
         List<TaskDependency> dependencies,
         Instant createdAt,
@@ -21,5 +22,25 @@ public record WorkflowDefinition(
     public WorkflowDefinition {
         tasks = List.copyOf(tasks);
         dependencies = List.copyOf(dependencies);
+    }
+
+    public WorkflowDefinition(
+            UUID id,
+            long lockVersion,
+            WorkflowLifecycleStatus lifecycleStatus,
+            int definitionVersion,
+            WorkflowVersionStatus versionStatus,
+            String name,
+            String description,
+            List<TaskDefinition> tasks,
+            List<TaskDependency> dependencies,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant publishedAt
+    ) {
+        this(
+                id, lockVersion, lifecycleStatus, definitionVersion, versionStatus,
+                name, description, null, tasks, dependencies, createdAt, updatedAt, publishedAt
+        );
     }
 }

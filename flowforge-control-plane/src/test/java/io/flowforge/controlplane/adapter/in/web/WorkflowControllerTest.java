@@ -103,6 +103,34 @@ class WorkflowControllerTest {
     }
 
     @Test
+    void acceptsAndReturnsVersionedConcurrencyPolicies() throws Exception {
+        String request = """
+                {
+                  "name": "Capacity bounded workflow",
+                  "maxConcurrentExecutions": 4,
+                  "tasks": [{
+                    "key": "PROCESS_PAYMENT",
+                    "name": "Process payment",
+                    "type": "HTTP",
+                    "maxConcurrency": 2
+                  }],
+                  "dependencies": []
+                }
+                """;
+        when(repository.create(any())).thenAnswer(invocation -> {
+            WorkflowDraft draft = invocation.getArgument(0, WorkflowDraft.class);
+            return workflow(draft.maxConcurrentExecutions(), draft.tasks().getFirst());
+        });
+
+        mvc.perform(post("/api/v1/workflows")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.maxConcurrentExecutions").value(4))
+                .andExpect(jsonPath("$.tasks[0].maxConcurrency").value(2));
+    }
+
+    @Test
     void requiresIfMatchForMutation() throws Exception {
         mvc.perform(put("/api/v1/workflows/" + WORKFLOW_ID)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -140,6 +168,10 @@ class WorkflowControllerTest {
     }
 
     private static WorkflowDefinition workflow(TaskDefinition task) {
+        return workflow(null, task);
+    }
+
+    private static WorkflowDefinition workflow(Integer maxConcurrentExecutions, TaskDefinition task) {
         Instant now = Instant.parse("2026-08-28T10:00:00Z");
         return new WorkflowDefinition(
                 WORKFLOW_ID,
@@ -149,6 +181,7 @@ class WorkflowControllerTest {
                 WorkflowVersionStatus.DRAFT,
                 "Order processing",
                 null,
+                maxConcurrentExecutions,
                 List.of(task),
                 List.of(),
                 now,

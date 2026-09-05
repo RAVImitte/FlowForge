@@ -1,6 +1,7 @@
 package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.application.execution.ExecutionConflictException;
+import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.application.schedule.ScheduleConflictException;
@@ -21,6 +22,22 @@ import java.util.List;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(ConcurrencyLimitExceededException.class)
+    ResponseEntity<ProblemDetail> concurrencyLimitExceeded(
+            ConcurrencyLimitExceededException exception,
+            HttpServletRequest request
+    ) {
+        ProblemDetail detail = detail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "WORKFLOW_CONCURRENCY_LIMIT_EXCEEDED",
+                exception.getMessage(),
+                request
+        );
+        detail.setProperty("workflowId", exception.workflowId());
+        detail.setProperty("limit", exception.limit());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(detail);
+    }
+
     @ExceptionHandler(ScheduleNotFoundException.class)
     ResponseEntity<ProblemDetail> scheduleNotFound(
             ScheduleNotFoundException exception,

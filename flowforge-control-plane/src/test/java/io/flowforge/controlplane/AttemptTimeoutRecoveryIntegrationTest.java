@@ -81,6 +81,8 @@ class AttemptTimeoutRecoveryIntegrationTest {
     @BeforeEach
     void removeExecutions() {
         jdbc.sql("DELETE FROM workflow_execution").update();
+        jdbc.sql("DELETE FROM coordination_permit WHERE resource_key LIKE 'concurrency:%'").update();
+        jdbc.sql("DELETE FROM coordination_resource WHERE resource_key LIKE 'concurrency:%'").update();
     }
 
     @Test
@@ -113,6 +115,7 @@ class AttemptTimeoutRecoveryIntegrationTest {
         assertThat(scheduled.events()).extracting(event -> event.type())
                 .contains(ExecutionEventType.TASK_ATTEMPT_TIMED_OUT,
                         ExecutionEventType.TASK_RETRY_SCHEDULED);
+        assertThat(activeTaskPermits()).isZero();
 
         assertThatThrownBy(() -> executions.completeTask(
                 TaskCompletion.from(first, TaskResult.succeeded()),
@@ -231,7 +234,7 @@ class AttemptTimeoutRecoveryIntegrationTest {
         WorkflowDefinition draft = workflows.create(new WorkflowDraft(
                 "Timeout test",
                 null,
-                List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy)),
+                List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy, 1)),
                 List.of()
         ));
         WorkflowDefinition published = workflows.publish(draft.id(), draft.lockVersion());
@@ -247,6 +250,14 @@ class AttemptTimeoutRecoveryIntegrationTest {
     private double count(String name) {
         var counter = meters.find(name).counter();
         return counter == null ? 0.0 : counter.count();
+    }
+
+    private long activeTaskPermits() {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM coordination_permit
+                 WHERE resource_key LIKE 'concurrency:task:%'
+                   AND status = 'ACTIVE'
+                """).query(Long.class).single();
     }
 
     private static TaskReliabilityPolicy policy(

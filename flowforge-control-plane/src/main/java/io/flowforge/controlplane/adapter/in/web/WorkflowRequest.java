@@ -21,14 +21,16 @@ public record WorkflowRequest(
         @NotBlank @Size(max = 200) String name,
         @Size(max = 2000) String description,
         @NotEmpty @Size(max = 1000) List<@Valid TaskRequest> tasks,
-        List<@Valid DependencyRequest> dependencies
+        List<@Valid DependencyRequest> dependencies,
+        @Min(1) @Max(100000) Integer maxConcurrentExecutions
 ) {
     public record TaskRequest(
             @NotBlank @Pattern(regexp = "[A-Z][A-Z0-9_]{0,99}") String key,
             @NotBlank @Size(max = 200) String name,
             @NotBlank @Pattern(regexp = "[A-Z][A-Z0-9_.-]{0,99}") String type,
             Map<String, Object> configuration,
-            @Valid ReliabilityPolicyRequest reliabilityPolicy
+            @Valid ReliabilityPolicyRequest reliabilityPolicy,
+            @Min(1) @Max(100000) Integer maxConcurrency
     ) {
     }
 

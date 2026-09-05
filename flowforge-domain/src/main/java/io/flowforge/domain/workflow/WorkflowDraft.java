@@ -13,7 +13,8 @@ public record WorkflowDraft(
         String name,
         String description,
         List<TaskDefinition> tasks,
-        List<TaskDependency> dependencies
+        List<TaskDependency> dependencies,
+        Integer maxConcurrentExecutions
 ) {
     private static final Pattern KEY_PATTERN = Pattern.compile("[A-Z][A-Z0-9_]{0,99}");
     private static final Pattern TYPE_PATTERN = Pattern.compile("[A-Z][A-Z0-9_.-]{0,99}");
@@ -23,14 +24,24 @@ public record WorkflowDraft(
         description = description == null ? null : description.strip();
         tasks = tasks == null ? List.of() : List.copyOf(tasks);
         dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
-        validate(name, description, tasks, dependencies);
+        validate(name, description, tasks, dependencies, maxConcurrentExecutions);
+    }
+
+    public WorkflowDraft(
+            String name,
+            String description,
+            List<TaskDefinition> tasks,
+            List<TaskDependency> dependencies
+    ) {
+        this(name, description, tasks, dependencies, null);
     }
 
     private static void validate(
             String name,
             String description,
             List<TaskDefinition> tasks,
-            List<TaskDependency> dependencies
+            List<TaskDependency> dependencies,
+            Integer maxConcurrentExecutions
     ) {
         List<String> violations = new ArrayList<>();
         if (name == null || name.isBlank()) violations.add("name must not be blank");
@@ -40,6 +51,7 @@ public record WorkflowDraft(
         }
         if (tasks.isEmpty()) violations.add("at least one task is required");
         if (tasks.size() > 1_000) violations.add("a workflow cannot contain more than 1000 tasks");
+        validateLimit(maxConcurrentExecutions, "maxConcurrentExecutions", violations);
 
         Set<String> keys = new HashSet<>();
         for (int i = 0; i < tasks.size(); i++) {
@@ -61,6 +73,7 @@ public record WorkflowDraft(
             if (task.type() == null || !TYPE_PATTERN.matcher(task.type()).matches()) {
                 violations.add("task type must match " + TYPE_PATTERN.pattern() + " for " + task.key());
             }
+            validateLimit(task.maxConcurrency(), "maxConcurrency for " + task.key(), violations);
         }
 
         Set<TaskDependency> uniqueDependencies = new HashSet<>();
@@ -87,6 +100,12 @@ public record WorkflowDraft(
             violations.add("workflow graph must be acyclic");
         }
         if (!violations.isEmpty()) throw new DomainValidationException(violations);
+    }
+
+    private static void validateLimit(Integer limit, String name, List<String> violations) {
+        if (limit != null && (limit < 1 || limit > 100_000)) {
+            violations.add(name + " must be between 1 and 100000");
+        }
     }
 
     private static boolean containsCycle(Set<String> keys, List<TaskDependency> dependencies) {

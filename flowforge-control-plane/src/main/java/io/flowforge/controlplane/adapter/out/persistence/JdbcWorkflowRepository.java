@@ -32,7 +32,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
     private static final String SELECT_CURRENT = """
             SELECT w.id, w.lock_version, w.lifecycle_status, w.created_at, w.updated_at,
                    v.id AS workflow_version_id, v.version_number, v.version_status,
-                   v.name, v.description, v.published_at
+                   v.name, v.description, v.max_concurrent_executions, v.published_at
               FROM workflow_definition w
               JOIN LATERAL (
                     SELECT candidate.*
@@ -65,15 +65,18 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                 """).param("id", workflowId).update();
         jdbc.sql("""
                 INSERT INTO workflow_version(
-                    id, workflow_id, version_number, version_status, name, description
+                    id, workflow_id, version_number, version_status, name, description,
+                    max_concurrent_executions
                 ) VALUES (
-                    :id, :workflowId, 1, 'DRAFT', :name, :description
+                    :id, :workflowId, 1, 'DRAFT', :name, :description,
+                    :maxConcurrentExecutions
                 )
                 """)
                 .param("id", versionId)
                 .param("workflowId", workflowId)
                 .param("name", draft.name())
                 .param("description", draft.description())
+                .param("maxConcurrentExecutions", draft.maxConcurrentExecutions())
                 .update();
         replaceGraph(versionId, draft);
         return findById(workflowId).orElseThrow();
@@ -94,6 +97,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                             WorkflowVersionStatus.valueOf(rs.getString("version_status")),
                             rs.getString("name"),
                             rs.getString("description"),
+                            (Integer) rs.getObject("max_concurrent_executions"),
                             loadTasks(versionId),
                             loadDependencies(versionId),
                             instant(rs.getObject("created_at")),
@@ -156,11 +160,15 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
             versionId = existingDraft.get();
             jdbc.sql("""
                     UPDATE workflow_version
-                       SET name = :name, description = :description, updated_at = CURRENT_TIMESTAMP
+                       SET name = :name,
+                           description = :description,
+                           max_concurrent_executions = :maxConcurrentExecutions,
+                           updated_at = CURRENT_TIMESTAMP
                      WHERE id = :id
                     """)
                     .param("name", draft.name())
                     .param("description", draft.description())
+                    .param("maxConcurrentExecutions", draft.maxConcurrentExecutions())
                     .param("id", versionId)
                     .update();
         } else {
@@ -171,9 +179,11 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
             versionId = UUID.randomUUID();
             jdbc.sql("""
                     INSERT INTO workflow_version(
-                        id, workflow_id, version_number, version_status, name, description
+                        id, workflow_id, version_number, version_status, name, description,
+                        max_concurrent_executions
                     ) VALUES (
-                        :id, :workflowId, :versionNumber, 'DRAFT', :name, :description
+                        :id, :workflowId, :versionNumber, 'DRAFT', :name, :description,
+                        :maxConcurrentExecutions
                     )
                     """)
                     .param("id", versionId)
@@ -181,6 +191,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                     .param("versionNumber", nextVersion)
                     .param("name", draft.name())
                     .param("description", draft.description())
+                    .param("maxConcurrentExecutions", draft.maxConcurrentExecutions())
                     .update();
         }
         replaceGraph(versionId, draft);
@@ -258,12 +269,13 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                     INSERT INTO workflow_task(
                         id, workflow_version_id, task_key, task_name, task_type, configuration, position,
                         max_attempts, initial_backoff_ms, backoff_multiplier, max_backoff_ms,
-                        jitter_factor, attempt_timeout_ms, retryable_error_codes
+                        jitter_factor, attempt_timeout_ms, retryable_error_codes, max_concurrency
                     ) VALUES (
                         :id, :versionId, :taskKey, :taskName, :taskType,
                         CAST(:configuration AS jsonb), :position,
                         :maxAttempts, :initialBackoffMs, :backoffMultiplier, :maxBackoffMs,
-                        :jitterFactor, :attemptTimeoutMs, CAST(:retryableErrorCodes AS jsonb)
+                        :jitterFactor, :attemptTimeoutMs, CAST(:retryableErrorCodes AS jsonb),
+                        :maxConcurrency
                     )
                     """)
                     .param("id", UUID.randomUUID())
@@ -282,6 +294,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                             ? null
                             : task.reliabilityPolicy().attemptTimeout().toMillis())
                     .param("retryableErrorCodes", toJson(task.reliabilityPolicy().retryableErrorCodes()))
+                    .param("maxConcurrency", task.maxConcurrency())
                     .update();
         }
         for (TaskDependency dependency : draft.dependencies()) {
@@ -301,7 +314,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
         return jdbc.sql("""
                 SELECT task_key, task_name, task_type, configuration,
                        max_attempts, initial_backoff_ms, backoff_multiplier, max_backoff_ms,
-                       jitter_factor, attempt_timeout_ms, retryable_error_codes
+                       jitter_factor, attempt_timeout_ms, retryable_error_codes, max_concurrency
                   FROM workflow_task
                  WHERE workflow_version_id = :versionId
                  ORDER BY position
@@ -320,7 +333,8 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                                 rs.getDouble("jitter_factor"),
                                 nullableDuration(rs.getObject("attempt_timeout_ms")),
                                 stringSetFromJson(rs.getString("retryable_error_codes"))
-                        )
+                        ),
+                        (Integer) rs.getObject("max_concurrency")
                 ))
                 .list();
     }

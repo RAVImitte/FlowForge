@@ -16,3 +16,5 @@ flowforge:
     enabled: true
   coordination:
     enabled: true
+  concurrency:
+    reconciliation-enabled: true

@@ -18,6 +18,7 @@ public record WorkflowResponse(
         String versionStatus,
         String name,
         String description,
+        Integer maxConcurrentExecutions,
         List<TaskResponse> tasks,
         List<DependencyResponse> dependencies,
         Instant createdAt,
@@ -33,6 +34,7 @@ public record WorkflowResponse(
                 workflow.versionStatus().name(),
                 workflow.name(),
                 workflow.description(),
+                workflow.maxConcurrentExecutions(),
                 workflow.tasks().stream().map(TaskResponse::from).toList(),
                 workflow.dependencies().stream().map(DependencyResponse::from).toList(),
                 workflow.createdAt(),
@@ -46,7 +48,8 @@ public record WorkflowResponse(
             String name,
             String type,
             Map<String, Object> configuration,
-            ReliabilityPolicyResponse reliabilityPolicy
+            ReliabilityPolicyResponse reliabilityPolicy,
+            Integer maxConcurrency
     ) {
         static TaskResponse from(TaskDefinition task) {
             return new TaskResponse(
@@ -56,7 +59,8 @@ public record WorkflowResponse(
                     task.configuration(),
                     task.reliabilityPolicy().isDefault()
                             ? null
-                            : ReliabilityPolicyResponse.from(task.reliabilityPolicy())
+                            : ReliabilityPolicyResponse.from(task.reliabilityPolicy()),
+                    task.maxConcurrency()
             );
         }
     }

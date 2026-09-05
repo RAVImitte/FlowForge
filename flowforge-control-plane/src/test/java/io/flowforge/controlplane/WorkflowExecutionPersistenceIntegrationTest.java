@@ -1,6 +1,8 @@
 package io.flowforge.controlplane;
 
 import io.flowforge.application.execution.ExecutionRepository;
+import io.flowforge.application.execution.ConcurrencyLimitExceededException;
+import io.flowforge.application.execution.ConcurrencyPermitRecovery;
 import io.flowforge.application.execution.TaskCompletion;
 import io.flowforge.application.execution.TaskCompletionResult;
 import io.flowforge.application.execution.TaskResult;
@@ -37,6 +39,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -67,11 +70,154 @@ class WorkflowExecutionPersistenceIntegrationTest {
     ExecutionRepository executionRepository;
 
     @Autowired
+    ConcurrencyPermitRecovery concurrencyPermitRecovery;
+
+    @Autowired
     JdbcClient jdbc;
 
     @BeforeEach
     void removeExecutions() {
         jdbc.sql("DELETE FROM workflow_execution").update();
+        jdbc.sql("DELETE FROM coordination_permit WHERE resource_key LIKE 'concurrency:%'").update();
+        jdbc.sql("DELETE FROM coordination_resource WHERE resource_key LIKE 'concurrency:%'").update();
+    }
+
+    @Test
+    void enforcesAndReleasesVersionedWorkflowConcurrency() {
+        WorkflowDefinition published = publish(new WorkflowDraft(
+                "Limited workflow",
+                null,
+                List.of(task("ROOT")),
+                List.of(),
+                1
+        ));
+        WorkflowExecution first = executionRepository.start(published.id(), "limited-1", TIME);
+
+        assertThatThrownBy(() -> executionRepository.start(
+                published.id(), "limited-2", TIME.plusSeconds(31)
+        )).isInstanceOf(ConcurrencyLimitExceededException.class);
+
+        TaskWorkItem task = onlyClaim(TIME.plusSeconds(32));
+        executionRepository.completeTask(
+                TaskCompletion.from(task, TaskResult.succeeded()),
+                TIME.plusSeconds(33)
+        );
+        WorkflowExecution second = executionRepository.start(published.id(), "limited-2", TIME.plusSeconds(34));
+
+        assertThat(second.workflow().id()).isNotEqualTo(first.workflow().id());
+        assertThat(activeConcurrencyPermits("concurrency:workflow-version:%")).isEqualTo(1);
+    }
+
+    @Test
+    void taskConcurrencyLeavesSaturatedWorkReadyUntilCapacityIsReleased() {
+        TaskDefinition limitedTask = new TaskDefinition(
+                "ROOT", "ROOT", "NOOP", Map.of(), TaskReliabilityPolicy.defaults(), 1
+        );
+        WorkflowDefinition published = publish(new WorkflowDraft(
+                "Task limited workflow", null, List.of(limitedTask), List.of()
+        ));
+        WorkflowExecution first = executionRepository.start(published.id(), "task-limit-1", TIME);
+        WorkflowExecution second = executionRepository.start(published.id(), "task-limit-2", TIME);
+
+        List<TaskWorkItem> firstBatch = executionRepository.claimReadyTasks(10, TIME.plusSeconds(1));
+        assertThat(firstBatch).hasSize(1);
+        WorkflowExecution waiting = executionRepository.findById(
+                firstBatch.getFirst().workflowRunId().equals(first.workflow().id())
+                        ? second.workflow().id()
+                        : first.workflow().id()
+        ).orElseThrow();
+        assertThat(waiting.tasks()).singleElement()
+                .extracting(task -> task.status())
+                .isEqualTo(TaskRunStatus.READY);
+        assertThat(activeConcurrencyPermits("concurrency:task:%")).isEqualTo(1);
+
+        executionRepository.completeTask(
+                TaskCompletion.from(firstBatch.getFirst(), TaskResult.succeeded()),
+                TIME.plusSeconds(2)
+        );
+        List<TaskWorkItem> secondBatch = executionRepository.claimReadyTasks(10, TIME.plusSeconds(3));
+
+        assertThat(secondBatch).hasSize(1);
+        assertThat(secondBatch.getFirst().workflowRunId()).isEqualTo(waiting.workflow().id());
+        assertThat(activeConcurrencyPermits("concurrency:task:%")).isEqualTo(1);
+    }
+
+    @Test
+    void retrySchedulingReleasesTaskCapacityForOtherExecutions() {
+        TaskReliabilityPolicy retryPolicy = new TaskReliabilityPolicy(
+                2, Duration.ofSeconds(10), 2.0, Duration.ofSeconds(10), 0.0, null, Set.of()
+        );
+        TaskDefinition limitedTask = new TaskDefinition(
+                "ROOT", "ROOT", "NOOP", Map.of(), retryPolicy, 1
+        );
+        WorkflowDefinition published = publish(new WorkflowDraft(
+                "Retry capacity", null, List.of(limitedTask), List.of()
+        ));
+        executionRepository.start(published.id(), "retry-capacity-1", TIME);
+        executionRepository.start(published.id(), "retry-capacity-2", TIME);
+        TaskWorkItem first = onlyClaim(TIME.plusSeconds(1));
+
+        executionRepository.completeTask(
+                TaskCompletion.from(first, TaskResult.retryableFailure("TRANSIENT", "try again")),
+                TIME.plusSeconds(2)
+        );
+        TaskWorkItem replacement = onlyClaim(TIME.plusSeconds(3));
+
+        assertThat(replacement.workflowRunId()).isNotEqualTo(first.workflowRunId());
+        assertThat(activeConcurrencyPermits("concurrency:task:%")).isEqualTo(1);
+    }
+
+    @Test
+    void rebuildsExpiredPermitsFromActivePostgresExecutionState() {
+        WorkflowDefinition published = publish(new WorkflowDraft(
+                "Recoverable limit", null, List.of(task("ROOT")), List.of(), 1
+        ));
+        WorkflowExecution execution = executionRepository.start(published.id(), "recover-limit", TIME);
+        UUID oldToken = workflowPermitToken(execution.workflow().id());
+
+        int reconciled = concurrencyPermitRecovery.reconcileConcurrencyPermits(100, TIME.plusSeconds(31));
+        UUID replacement = workflowPermitToken(execution.workflow().id());
+
+        assertThat(reconciled).isPositive();
+        assertThat(replacement).isNotEqualTo(oldToken);
+        assertThat(activeConcurrencyPermits("concurrency:workflow-version:%")).isEqualTo(1);
+        assertThatThrownBy(() -> executionRepository.start(
+                published.id(), "recover-limit-2", TIME.plusSeconds(32)
+        )).isInstanceOf(ConcurrencyLimitExceededException.class);
+    }
+
+    @Test
+    void serializesWorkflowAdmissionAcrossCompetingReplicas() throws Exception {
+        WorkflowDefinition published = publish(new WorkflowDraft(
+                "Replica-safe limit", null, List.of(task("ROOT")), List.of(), 2
+        ));
+        int callers = 8;
+        CountDownLatch start = new CountDownLatch(1);
+        List<Boolean> admitted;
+        try (var pool = Executors.newFixedThreadPool(callers)) {
+            var futures = java.util.stream.IntStream.range(0, callers)
+                    .mapToObj(index -> pool.submit(() -> {
+                        start.await();
+                        try {
+                            executionRepository.start(published.id(), "replica-" + index, TIME);
+                            return true;
+                        } catch (ConcurrencyLimitExceededException saturated) {
+                            return false;
+                        }
+                    }))
+                    .toList();
+            start.countDown();
+            admitted = futures.stream().map(future -> {
+                try {
+                    return future.get(10, TimeUnit.SECONDS);
+                } catch (Exception failure) {
+                    throw new AssertionError(failure);
+                }
+            }).toList();
+        }
+
+        assertThat(admitted).filteredOn(Boolean::booleanValue).hasSize(2);
+        assertThat(activeConcurrencyPermits("concurrency:workflow-version:%")).isEqualTo(2);
     }
 
     @Test
@@ -291,6 +437,26 @@ class WorkflowExecutionPersistenceIntegrationTest {
         List<TaskWorkItem> claimed = executionRepository.claimReadyTasks(10, time);
         assertThat(claimed).hasSize(1);
         return claimed.getFirst();
+    }
+
+    private long activeConcurrencyPermits(String resourcePattern) {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM coordination_permit
+                 WHERE resource_key LIKE :resourcePattern
+                   AND status = 'ACTIVE'
+                """)
+                .param("resourcePattern", resourcePattern)
+                .query(Long.class)
+                .single();
+    }
+
+    private UUID workflowPermitToken(UUID executionId) {
+        return jdbc.sql("""
+                SELECT concurrency_permit_token FROM workflow_execution WHERE id = :executionId
+                """)
+                .param("executionId", executionId)
+                .query(UUID.class)
+                .single();
     }
 
     private static TaskWorkItem byKey(List<TaskWorkItem> items, String key) {

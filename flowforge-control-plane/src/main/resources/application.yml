@@ -123,3 +123,8 @@ flowforge:
     namespace: ${FLOWFORGE_ENVIRONMENT:local}
     lease-duration: ${FLOWFORGE_COORDINATION_LEASE_DURATION:30s}
     ttl-padding: ${FLOWFORGE_COORDINATION_TTL_PADDING:2m}
+  concurrency:
+    lease-duration: ${FLOWFORGE_CONCURRENCY_LEASE_DURATION:30s}
+    reconciliation-enabled: ${FLOWFORGE_CONCURRENCY_RECONCILIATION_ENABLED:false}
+    reconciliation-batch-size: ${FLOWFORGE_CONCURRENCY_RECONCILIATION_BATCH_SIZE:200}
+    reconciliation-interval-ms: ${FLOWFORGE_CONCURRENCY_RECONCILIATION_INTERVAL_MS:10000}

@@ -98,7 +98,8 @@ public class WorkflowController {
                         task.configuration(),
                         task.reliabilityPolicy() == null
                                 ? null
-                                : task.reliabilityPolicy().toDomain()
+                                : task.reliabilityPolicy().toDomain(),
+                        task.maxConcurrency()
                 ))
                 .toList();
         List<TaskDependency> dependencies = request.dependencies() == null
@@ -108,7 +109,9 @@ public class WorkflowController {
                                 dependency.taskKey(), dependency.dependsOnTaskKey()
                         ))
                         .toList();
-        return new WorkflowDraft(request.name(), request.description(), tasks, dependencies);
+        return new WorkflowDraft(
+                request.name(), request.description(), tasks, dependencies, request.maxConcurrentExecutions()
+        );
     }
 
     private static long parseEtag(String value) {

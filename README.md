@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable scheduling and Redis-assisted coordination are complete, while workflow and task concurrency enforcement is the next slice.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable scheduling, Redis-assisted coordination, and workflow/task concurrency enforcement are complete; rate limiting and admission backpressure are next.
 
 ## Current capabilities
 
@@ -60,8 +60,14 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Mirror short-lived permits into Redis with atomic Lua acquire, renew, release, and replacement operations
 - Namespace and hash Redis keys while bounding every coordination key with a TTL
 - Continue safely through Redis outages and reconstruct ephemeral state from PostgreSQL after key loss
+- Persist optional per-workflow-version and per-task concurrency limits with workflow definitions
+- Serialize workflow admission and task dispatch across replicas through PostgreSQL-authoritative permits
+- Leave saturated tasks durably `READY` and return HTTP 429 for saturated workflow admission
+- Release task permits on success, failure, retry, cancellation, timeout, and orphan-lease recovery paths
+- Renew active permits, retire leaked ownership, and rebuild Redis state from active PostgreSQL executions
+- Expose bounded workflow rejection, task deferral, permit lifecycle, and reconciliation metrics
 
-Phase 4 is complete. Phase 5 Slices 5.1-5.3 are verified across PostgreSQL, Kafka, and Redis. Slice 5.4 applies the permit foundation to workflow and task concurrency limits.
+Phase 4 is complete. Phase 5 Slices 5.1-5.4 are verified across PostgreSQL, Kafka, and Redis. Slice 5.5 adds rate limiting and admission backpressure.
 
 ## Prerequisites
 
@@ -160,6 +166,10 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_ENVIRONMENT` | `local` |
 | `FLOWFORGE_COORDINATION_LEASE_DURATION` | `30s` |
 | `FLOWFORGE_COORDINATION_TTL_PADDING` | `2m` |
+| `FLOWFORGE_CONCURRENCY_LEASE_DURATION` | `30s` |
+| `FLOWFORGE_CONCURRENCY_RECONCILIATION_ENABLED` | `false`; production profile: `true` |
+| `FLOWFORGE_CONCURRENCY_RECONCILIATION_BATCH_SIZE` | `200` |
+| `FLOWFORGE_CONCURRENCY_RECONCILIATION_INTERVAL_MS` | `10000` |
 | `FLOWFORGE_INSTANCE_ID` | Generated per process |
 | `FLOWFORGE_WORKER_ID` | Generated per process |
 | `FLOWFORGE_WORKER_GROUP` | `flowforge-workers-v1` |
@@ -191,6 +201,7 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 - Scheduler replicas claim disjoint due definitions and pending triggers through PostgreSQL row locks. Trigger leases are token-fenced, and replay uses the same deterministic idempotency key, so a crash cannot create a second logical workflow execution.
 - A stale recurring schedule creates at most one catch-up execution per poll. `SKIP` records the missed occurrence without execution; both policies advance directly to the first future cron occurrence to prevent catch-up storms.
 - PostgreSQL serializes authoritative permit capacity per resource. Redis stores only an expiring, atomically maintained mirror; loss or eviction can reduce coordination efficiency but cannot grant capacity beyond the durable ledger.
+- Concurrency limits belong to immutable workflow versions. Active PostgreSQL execution and attempt state is checked under the same resource lock as permit acquisition, so expired or missing Redis entries cannot oversubscribe a limit.
 
 ## API
 
@@ -232,6 +243,7 @@ Example request:
 {
   "name": "Order processing",
   "description": "Validate, charge, and notify",
+  "maxConcurrentExecutions": 20,
   "tasks": [
     {
       "key": "VALIDATE_ORDER",
@@ -243,7 +255,8 @@ Example request:
       "key": "PROCESS_PAYMENT",
       "name": "Process payment",
       "type": "DELAY",
-      "configuration": {"durationMs": 100}
+      "configuration": {"durationMs": 100},
+      "maxConcurrency": 5
     }
   ],
   "dependencies": [

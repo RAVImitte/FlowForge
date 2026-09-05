@@ -92,7 +92,7 @@ Implemented checkpoint:
 
 ### Slice 5.4: Workflow and task concurrency limits
 
-Status: **NEXT**
+Status: **COMPLETED**
 
 - Add versioned per-workflow and per-task concurrency policies.
 - Acquire permits before dispatch and release them on every terminal, timeout, and orphan-recovery path.
@@ -101,9 +101,21 @@ Status: **NEXT**
 
 Exit: configured limits hold under concurrent dispatch, crashes, retries, and Redis recovery.
 
+Implemented checkpoint:
+
+- Added optional, validated concurrency policies to immutable workflow versions and individual task definitions through Flyway migration V10 and the workflow HTTP contract.
+- Acquired token-owned PostgreSQL permits before workflow admission and task dispatch, with active execution state checked under the same resource lock.
+- Preserved start idempotency during concurrent admission and returned an explicit HTTP 429 response when a workflow-version limit is saturated.
+- Left task work durably `READY` when its task-version capacity is full so another dispatch pass can claim it after release.
+- Released task permits on normal completion, retry scheduling, terminal timeout, cancellation, and expired worker-lease recovery; released workflow permits on every terminal transition.
+- Added a production reconciliation loop that renews live ownership, replaces expired tokens, releases orphaned permits, and rebuilds the Redis mirror from PostgreSQL execution state.
+- Added bounded metrics for permits acquired/released, workflow rejections, task deferrals, reconciliation work, and reconciliation failures.
+- Verified concurrent multi-replica admission, task deferral, retry/timeout/orphan release, permit expiry recovery, Redis key loss, and versioned API persistence.
+- Verified the complete Maven reactor: 165 tests across 53 suites, with no failures, errors, or skipped tests.
+
 ### Slice 5.5: Rate limiting and admission backpressure
 
-Status: **PLANNED**
+Status: **NEXT**
 
 - Add atomic token-bucket rate limiting for schedule fires and task dispatch.
 - Bound pending scheduled work and per-workflow ready queues.

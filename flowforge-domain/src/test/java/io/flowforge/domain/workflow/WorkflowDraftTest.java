@@ -14,6 +14,26 @@ class WorkflowDraftTest {
     }
 
     @Test
+    void rejectsInvalidWorkflowAndTaskConcurrencyLimits() {
+        assertThatThrownBy(() -> new WorkflowDraft(
+                "Limited",
+                null,
+                List.of(new TaskDefinition(
+                        "ROOT", "Root", "NOOP", Map.of(), TaskReliabilityPolicy.defaults(), 0
+                )),
+                List.of(),
+                100_001
+        ))
+                .isInstanceOf(DomainValidationException.class)
+                .satisfies(error -> org.assertj.core.api.Assertions.assertThat(
+                        ((DomainValidationException) error).violations()
+                ).contains(
+                        "maxConcurrentExecutions must be between 1 and 100000",
+                        "maxConcurrency for ROOT must be between 1 and 100000"
+                ));
+    }
+
+    @Test
     void acceptsAValidDag() {
         assertDoesNotThrow(() -> new WorkflowDraft(
                 "Order processing",

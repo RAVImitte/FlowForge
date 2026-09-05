@@ -1,6 +1,7 @@
 package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.application.execution.ExecutionRepository;
+import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
 import io.flowforge.domain.execution.WorkflowExecution;
@@ -71,6 +72,19 @@ class WorkflowExecutionControllerTest {
         mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    }
+
+    @Test
+    void reportsWorkflowConcurrencySaturationAsTooManyRequests() throws Exception {
+        when(repository.start(WORKFLOW_ID, "order-43", NOW))
+                .thenThrow(new ConcurrencyLimitExceededException(WORKFLOW_ID, 3));
+
+        mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
+                        .header("Idempotency-Key", "order-43"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("WORKFLOW_CONCURRENCY_LIMIT_EXCEEDED"))
+                .andExpect(jsonPath("$.workflowId").value(WORKFLOW_ID.toString()))
+                .andExpect(jsonPath("$.limit").value(3));
     }
 
     @Test

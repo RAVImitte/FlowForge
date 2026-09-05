@@ -1,6 +1,8 @@
 package io.flowforge.controlplane.adapter.out.persistence;
 
 import io.flowforge.application.execution.ExecutionConflictException;
+import io.flowforge.application.execution.ConcurrencyLimitExceededException;
+import io.flowforge.application.execution.ConcurrencyLifecycleObserver;
 import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.AttemptTimeoutRecovery;
 import io.flowforge.application.execution.AttemptLeaseRecovery;
@@ -13,6 +15,9 @@ import io.flowforge.application.execution.TaskOutcome;
 import io.flowforge.application.execution.TaskWorkItem;
 import io.flowforge.application.execution.TimeoutLifecycleObserver;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
+import io.flowforge.application.coordination.CoordinationPermit;
+import io.flowforge.application.coordination.CoordinationPermitLedger;
+import io.flowforge.application.coordination.CoordinationPermitService;
 import io.flowforge.domain.execution.DagResolver;
 import io.flowforge.domain.execution.ExecutionEvent;
 import io.flowforge.domain.execution.ExecutionEventType;
@@ -32,8 +37,11 @@ import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
@@ -58,22 +66,39 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     private final RetryLifecycleObserver retryObserver;
     private final TimeoutLifecycleObserver timeoutObserver;
     private final Duration workerLeaseDuration;
+    private final Duration concurrencyLeaseDuration;
+    private final CoordinationPermitLedger permitLedger;
+    private final ObjectProvider<CoordinationPermitService> permitService;
+    private final ConcurrencyLifecycleObserver concurrencyObserver;
 
     public JdbcExecutionRepository(
             JdbcClient jdbc,
             ObjectMapper objectMapper,
             RetryLifecycleObserver retryObserver,
             TimeoutLifecycleObserver timeoutObserver,
-            @Value("${flowforge.leases.duration:30s}") Duration workerLeaseDuration
+            CoordinationPermitLedger permitLedger,
+            ObjectProvider<CoordinationPermitService> permitService,
+            ConcurrencyLifecycleObserver concurrencyObserver,
+            @Value("${flowforge.leases.duration:30s}") Duration workerLeaseDuration,
+            @Value("${flowforge.concurrency.lease-duration:30s}") Duration concurrencyLeaseDuration
     ) {
         if (workerLeaseDuration == null || workerLeaseDuration.isZero() || workerLeaseDuration.isNegative()) {
             throw new IllegalArgumentException("Worker lease duration must be positive");
+        }
+        if (concurrencyLeaseDuration == null
+                || concurrencyLeaseDuration.isZero()
+                || concurrencyLeaseDuration.isNegative()) {
+            throw new IllegalArgumentException("Concurrency lease duration must be positive");
         }
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
         this.retryObserver = retryObserver;
         this.timeoutObserver = timeoutObserver;
         this.workerLeaseDuration = workerLeaseDuration;
+        this.concurrencyLeaseDuration = concurrencyLeaseDuration;
+        this.permitLedger = permitLedger;
+        this.permitService = permitService;
+        this.concurrencyObserver = concurrencyObserver;
     }
 
     @Override
@@ -83,7 +108,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         if (existing.isPresent()) return get(existing.get());
 
         PublishedVersion version = jdbc.sql("""
-                SELECT v.id, v.version_number
+                SELECT v.id, v.version_number, v.max_concurrent_executions
                   FROM workflow_version v
                   JOIN workflow_definition w ON w.id = v.workflow_id
                  WHERE v.workflow_id = :workflowId
@@ -96,21 +121,60 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 .param("workflowId", workflowId)
                 .query((rs, rowNum) -> new PublishedVersion(
                         rs.getObject("id", UUID.class),
-                        rs.getInt("version_number")
+                        rs.getInt("version_number"),
+                        (Integer) rs.getObject("max_concurrent_executions")
                 ))
                 .optional()
                 .orElseThrow(() -> new WorkflowNotPublishedException(workflowId));
 
         UUID executionId = UUID.randomUUID();
+        UUID concurrencyPermitToken = null;
+        if (version.maxConcurrentExecutions() != null) {
+            String resourceKey = workflowResource(version.id());
+            Optional<CoordinationPermit> acquired = permitLedger.tryAcquire(
+                    resourceKey,
+                    executionId.toString(),
+                    UUID.randomUUID(),
+                    version.maxConcurrentExecutions(),
+                    now,
+                    concurrencyLeaseDuration
+            );
+            if (acquired.isEmpty()) {
+                Optional<UUID> concurrentReplay = findByIdempotencyKey(workflowId, idempotencyKey);
+                if (concurrentReplay.isPresent()) return get(concurrentReplay.get());
+                concurrencyObserver.workflowRejected();
+                throw new ConcurrencyLimitExceededException(workflowId, version.maxConcurrentExecutions());
+            }
+            concurrencyPermitToken = acquired.get().token();
+            long activeExecutions = jdbc.sql("""
+                    SELECT COUNT(*)
+                      FROM workflow_execution
+                     WHERE workflow_version_id = :versionId
+                       AND status IN ('PENDING', 'RUNNING', 'CANCELLING')
+                    """)
+                    .param("versionId", version.id())
+                    .query(Long.class)
+                    .single();
+            if (activeExecutions >= version.maxConcurrentExecutions()) {
+                releasePermit(concurrencyPermitToken, now);
+                Optional<UUID> concurrentReplay = findByIdempotencyKey(workflowId, idempotencyKey);
+                if (concurrentReplay.isPresent()) return get(concurrentReplay.get());
+                concurrencyObserver.workflowRejected();
+                throw new ConcurrencyLimitExceededException(workflowId, version.maxConcurrentExecutions());
+            }
+            scheduleReconciliation(resourceKey);
+        }
         WorkflowRun running = WorkflowRun.pending(executionId, workflowId, version.versionNumber(), now)
                 .transitionTo(WorkflowRunStatus.RUNNING, now);
         int inserted = jdbc.sql("""
                 INSERT INTO workflow_execution(
                     id, workflow_id, workflow_version_id, workflow_version_number,
-                    idempotency_key, status, state_version, created_at, started_at, finished_at
+                    idempotency_key, status, state_version, created_at, started_at, finished_at,
+                    concurrency_permit_token
                 ) VALUES (
                     :id, :workflowId, :workflowVersionId, :workflowVersionNumber,
-                    :idempotencyKey, :status, :stateVersion, :createdAt, :startedAt, :finishedAt
+                    :idempotencyKey, :status, :stateVersion, :createdAt, :startedAt, :finishedAt,
+                    :concurrencyPermitToken
                 )
                 ON CONFLICT (workflow_id, idempotency_key) DO NOTHING
                 """)
@@ -124,11 +188,14 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 .param("createdAt", timestamp(running.createdAt()))
                 .param("startedAt", timestamp(running.startedAt()))
                 .param("finishedAt", timestamp(running.finishedAt()))
+                .param("concurrencyPermitToken", concurrencyPermitToken)
                 .update();
         if (inserted == 0) {
+            releasePermit(concurrencyPermitToken, now);
             UUID existingId = findByIdempotencyKey(workflowId, idempotencyKey).orElseThrow();
             return get(existingId);
         }
+        if (concurrencyPermitToken != null) concurrencyObserver.acquired("workflow");
 
         insertEvent(executionId, null, ExecutionEventType.WORKFLOW_CREATED, null, "PENDING", now);
         insertEvent(executionId, null, ExecutionEventType.WORKFLOW_STARTED, "PENDING", "RUNNING", now);
@@ -154,6 +221,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             updateWorkflow(workflow, cancelling);
             insertEvent(executionId, null, ExecutionEventType.WORKFLOW_CANCELLED,
                     workflow.status().name(), cancelling.status().name(), now);
+            releaseWorkflowPermit(executionId, now);
             return snapshot(cancelling);
         }
         if (workflow.status() == WorkflowRunStatus.RUNNING) {
@@ -171,6 +239,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             updateWorkflow(cancelling, cancelled);
             insertEvent(executionId, null, ExecutionEventType.WORKFLOW_CANCELLED,
                     cancelling.status().name(), cancelled.status().name(), now);
+            releaseWorkflowPermit(executionId, now);
             cancelling = cancelled;
         }
         return snapshot(cancelling);
@@ -179,23 +248,30 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     @Override
     @Transactional
     public List<TaskWorkItem> claimReadyTasks(int limit, Instant now) {
-        return claimCandidates(limit, null).stream().map(candidate -> claim(candidate, now, false)).toList();
+        return claimCandidates(limit, null).stream()
+                .map(candidate -> claim(candidate, now, false))
+                .flatMap(Optional::stream)
+                .toList();
     }
 
     @Override
     @Transactional
     public int enqueueReadyTasks(int limit, Instant now) {
         List<ClaimCandidate> candidates = claimCandidates(limit, null);
-        candidates.forEach(candidate -> claim(candidate, now, true));
-        return candidates.size();
+        return (int) candidates.stream()
+                .map(candidate -> claim(candidate, now, true))
+                .flatMap(Optional::stream)
+                .count();
     }
 
     @Override
     @Transactional
     public int enqueueReadyTasks(UUID workflowExecutionId, int limit, Instant now) {
         List<ClaimCandidate> candidates = claimCandidates(limit, workflowExecutionId);
-        candidates.forEach(candidate -> claim(candidate, now, true));
-        return candidates.size();
+        return (int) candidates.stream()
+                .map(candidate -> claim(candidate, now, true))
+                .flatMap(Optional::stream)
+                .count();
     }
 
     @Override
@@ -330,7 +406,8 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         var query = jdbc.sql("""
                 SELECT te.id, te.workflow_execution_id, te.task_key, te.status, te.state_version,
                        te.created_at, te.started_at, te.finished_at, te.next_attempt_at,
-                       wt.task_type, wt.configuration, wt.attempt_timeout_ms,
+                       wt.task_type, wt.configuration, wt.attempt_timeout_ms, wt.max_concurrency,
+                       we.workflow_version_id,
                        COALESCE((SELECT MAX(ta.attempt_number)
                                    FROM task_attempt ta
                                   WHERE ta.task_execution_id = te.id), 0) + 1 AS attempt_number
@@ -355,7 +432,9 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                         rs.getInt("attempt_number"),
                         rs.getObject("attempt_timeout_ms") == null
                                 ? null
-                                : rs.getLong("attempt_timeout_ms")
+                                : rs.getLong("attempt_timeout_ms"),
+                        rs.getObject("workflow_version_id", UUID.class),
+                        (Integer) rs.getObject("max_concurrency")
                 ))
                 .list();
     }
@@ -551,21 +630,27 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         }
     }
 
-    private TaskWorkItem claim(ClaimCandidate candidate, Instant now, boolean enqueueCommand) {
+    private Optional<TaskWorkItem> claim(ClaimCandidate candidate, Instant now, boolean enqueueCommand) {
         TaskRun current = candidate.task();
+        UUID attemptId = UUID.randomUUID();
+        UUID concurrencyPermitToken = acquireTaskPermit(candidate, attemptId, now);
+        if (candidate.maxConcurrency() != null && concurrencyPermitToken == null) {
+            concurrencyObserver.taskDeferred();
+            return Optional.empty();
+        }
         TaskRun running = current.transitionTo(TaskRunStatus.RUNNING, now);
         updateTask(current, running);
         UUID fencingToken = UUID.randomUUID();
         jdbc.sql("""
                 INSERT INTO task_attempt(
                     id, task_execution_id, attempt_number, status, started_at, attempt_deadline,
-                    lease_deadline, fencing_token
+                    lease_deadline, fencing_token, concurrency_permit_token
                 ) VALUES (
                     :id, :taskId, :attemptNumber, 'RUNNING', :startedAt, :attemptDeadline,
-                    :leaseDeadline, :fencingToken
+                    :leaseDeadline, :fencingToken, :concurrencyPermitToken
                 )
                 """)
-                .param("id", UUID.randomUUID())
+                .param("id", attemptId)
                 .param("taskId", running.id())
                 .param("attemptNumber", candidate.attemptNumber())
                 .param("startedAt", timestamp(now))
@@ -574,7 +659,9 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                         : timestamp(now.plusMillis(candidate.attemptTimeoutMs())))
                 .param("leaseDeadline", enqueueCommand ? timestamp(now.plus(workerLeaseDuration)) : null)
                 .param("fencingToken", fencingToken)
+                .param("concurrencyPermitToken", concurrencyPermitToken)
                 .update();
+        if (concurrencyPermitToken != null) concurrencyObserver.acquired("task");
         insertEvent(
                 running.workflowRunId(),
                 running.id(),
@@ -598,7 +685,86 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         );
         if (enqueueCommand) insertTaskCommand(workItem, now);
         if (candidate.attemptNumber() > 1) retryObserver.started();
-        return workItem;
+        return Optional.of(workItem);
+    }
+
+    private UUID acquireTaskPermit(ClaimCandidate candidate, UUID attemptId, Instant now) {
+        if (candidate.maxConcurrency() == null) return null;
+        String resourceKey = taskResource(candidate.workflowVersionId(), candidate.task().taskKey());
+        Optional<CoordinationPermit> acquired = permitLedger.tryAcquire(
+                resourceKey,
+                attemptId.toString(),
+                UUID.randomUUID(),
+                candidate.maxConcurrency(),
+                now,
+                concurrencyLeaseDuration
+        );
+        if (acquired.isEmpty()) return null;
+
+        long runningTasks = jdbc.sql("""
+                SELECT COUNT(*)
+                  FROM task_execution te
+                  JOIN workflow_execution we ON we.id = te.workflow_execution_id
+                 WHERE we.workflow_version_id = :versionId
+                   AND te.task_key = :taskKey
+                   AND te.status = 'RUNNING'
+                """)
+                .param("versionId", candidate.workflowVersionId())
+                .param("taskKey", candidate.task().taskKey())
+                .query(Long.class)
+                .single();
+        if (runningTasks >= candidate.maxConcurrency()) {
+            releasePermit(acquired.get().token(), now);
+            return null;
+        }
+        scheduleReconciliation(resourceKey);
+        return acquired.get().token();
+    }
+
+    private void releaseWorkflowPermit(UUID executionId, Instant now) {
+        UUID token = jdbc.sql("""
+                SELECT concurrency_permit_token
+                  FROM workflow_execution
+                 WHERE id = :executionId
+                """)
+                .param("executionId", executionId)
+                .query((rs, rowNum) -> rs.getObject("concurrency_permit_token", UUID.class))
+                .optional()
+                .orElse(null);
+        releasePermit(token, now);
+    }
+
+    private void releasePermit(UUID token, Instant now) {
+        if (token == null) return;
+        permitLedger.release(token, now).ifPresent(permit -> {
+            String scope = permit.resourceKey().startsWith("concurrency:task:") ? "task" : "workflow";
+            concurrencyObserver.released(scope);
+            scheduleReconciliation(permit.resourceKey());
+        });
+    }
+
+    private void scheduleReconciliation(String resourceKey) {
+        CoordinationPermitService service = permitService.getIfAvailable();
+        if (service == null) return;
+        Runnable reconcile = () -> service.reconcile(resourceKey);
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            reconcile.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                reconcile.run();
+            }
+        });
+    }
+
+    private static String workflowResource(UUID workflowVersionId) {
+        return "concurrency:workflow-version:" + workflowVersionId;
+    }
+
+    private static String taskResource(UUID workflowVersionId, String taskKey) {
+        return "concurrency:task:" + workflowVersionId + ":" + taskKey;
     }
 
     private WorkflowRun advanceWorkflow(WorkflowRun workflow, TaskRun completed, Instant now) {
@@ -610,6 +776,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                     updateWorkflow(workflow, succeeded);
                     insertEvent(workflow.id(), null, ExecutionEventType.WORKFLOW_SUCCEEDED,
                             workflow.status().name(), succeeded.status().name(), now);
+                    releaseWorkflowPermit(workflow.id(), now);
                     return succeeded;
                 }
             } else {
@@ -618,6 +785,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 updateWorkflow(workflow, failed);
                 insertEvent(workflow.id(), null, ExecutionEventType.WORKFLOW_FAILED,
                         workflow.status().name(), failed.status().name(), now);
+                releaseWorkflowPermit(workflow.id(), now);
                 return failed;
             }
         } else if (workflow.status() == WorkflowRunStatus.CANCELLING && allTasksTerminal(workflow.id())) {
@@ -625,6 +793,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             updateWorkflow(workflow, cancelled);
             insertEvent(workflow.id(), null, ExecutionEventType.WORKFLOW_CANCELLED,
                     workflow.status().name(), cancelled.status().name(), now);
+            releaseWorkflowPermit(workflow.id(), now);
             return cancelled;
         }
         return workflow;
@@ -671,7 +840,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     }
 
     private void completeAttempt(TaskRun completed, TaskCompletion completion, Instant now) {
-        int changed = jdbc.sql("""
+        Optional<CompletedAttempt> attempt = jdbc.sql("""
                 UPDATE task_attempt
                    SET status = :status,
                        finished_at = :finishedAt,
@@ -679,16 +848,21 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                        error_message = :errorMessage
                  WHERE task_execution_id = :taskId
                    AND status = 'RUNNING'
+                RETURNING concurrency_permit_token
                 """)
                 .param("status", TaskAttemptStatus.valueOf(completion.outcome().name()).name())
                 .param("finishedAt", timestamp(now))
                 .param("errorCode", truncate(completion.errorCode(), 100))
                 .param("errorMessage", truncate(completion.errorMessage(), 2_000))
                 .param("taskId", completed.id())
-                .update();
-        if (changed != 1) {
+                .query((rs, rowNum) -> new CompletedAttempt(
+                        rs.getObject("concurrency_permit_token", UUID.class)
+                ))
+                .optional();
+        if (attempt.isEmpty()) {
             throw new ExecutionConflictException("No running attempt exists for task " + completed.id());
         }
+        releasePermit(attempt.get().concurrencyPermitToken(), now);
     }
 
     private RetryContext loadRetryContext(UUID taskId) {
@@ -1197,7 +1371,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         return value == null ? null : Timestamp.from(value);
     }
 
-    private record PublishedVersion(UUID id, int versionNumber) {
+    private record PublishedVersion(UUID id, int versionNumber, Integer maxConcurrentExecutions) {
     }
 
     private record StoredExecution(UUID id, UUID workflowVersionId) {
@@ -1211,7 +1385,9 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             String taskType,
             Map<String, Object> configuration,
             int attemptNumber,
-            Long attemptTimeoutMs
+            Long attemptTimeoutMs,
+            UUID workflowVersionId,
+            Integer maxConcurrency
     ) {
     }
 
@@ -1219,5 +1395,8 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     }
 
     private record LeaseCandidate(UUID taskId, UUID fencingToken) {
+    }
+
+    private record CompletedAttempt(UUID concurrencyPermitToken) {
     }
 }
