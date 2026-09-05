@@ -14,3 +14,5 @@ flowforge:
     reaper-enabled: true
   scheduling:
     enabled: true
+  coordination:
+    enabled: true

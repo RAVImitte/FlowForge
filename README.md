@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable schedules and horizontally safe due-fire recovery are complete, while Redis-assisted coordination is the next slice.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable scheduling and Redis-assisted coordination are complete, while workflow and task concurrency enforcement is the next slice.
 
 ## Current capabilities
 
@@ -56,8 +56,12 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Recover abandoned trigger processing through token-fenced leases and delayed retries
 - Catch up once or skip stale occurrences according to an explicit misfire policy and threshold
 - Complete one-time schedules and durably advance recurring schedules to their next future occurrence
+- Serialize coordination capacity through a PostgreSQL-authoritative permit ledger
+- Mirror short-lived permits into Redis with atomic Lua acquire, renew, release, and replacement operations
+- Namespace and hash Redis keys while bounding every coordination key with a TTL
+- Continue safely through Redis outages and reconstruct ephemeral state from PostgreSQL after key loss
 
-Phase 4 is complete. Phase 5 Slices 5.1 and 5.2 are verified with durable definitions, trigger history, multi-replica claims, idempotent execution start, and crash recovery. Redis coordination follows in Slice 5.3.
+Phase 4 is complete. Phase 5 Slices 5.1-5.3 are verified across PostgreSQL, Kafka, and Redis. Slice 5.4 applies the permit foundation to workflow and task concurrency limits.
 
 ## Prerequisites
 
@@ -68,10 +72,10 @@ The Maven wrapper downloads the pinned Maven version automatically.
 
 ## Run locally
 
-Start PostgreSQL and Kafka:
+Start PostgreSQL, Kafka, and Redis:
 
 ```powershell
-docker compose up -d postgres kafka
+docker compose up -d postgres kafka redis
 ```
 
 Run the control plane in its production Kafka topology:
@@ -106,6 +110,11 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_DB_USERNAME` | `flowforge` |
 | `FLOWFORGE_DB_PASSWORD` | `flowforge` |
 | `FLOWFORGE_DB_POOL_SIZE` | `10` |
+| `FLOWFORGE_REDIS_HOST` | `localhost` |
+| `FLOWFORGE_REDIS_PORT` | `6379` |
+| `FLOWFORGE_REDIS_PASSWORD` | Empty |
+| `FLOWFORGE_REDIS_CONNECT_TIMEOUT` | `2s` |
+| `FLOWFORGE_REDIS_COMMAND_TIMEOUT` | `2s` |
 | `FLOWFORGE_DISPATCH_ENABLED` | `true`; production profile: `false` |
 | `FLOWFORGE_DISPATCH_INTERVAL_MS` | `250` |
 | `FLOWFORGE_KAFKA_ENABLED` | Control plane: `false`; production profile/worker: `true` |
@@ -147,6 +156,10 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_SCHEDULING_RETRY_DELAY` | `5s` |
 | `FLOWFORGE_SCHEDULING_MISFIRE_THRESHOLD` | `1m` |
 | `FLOWFORGE_SCHEDULER_INSTANCE_ID` | Generated per process |
+| `FLOWFORGE_COORDINATION_ENABLED` | `false`; production profile: `true` |
+| `FLOWFORGE_ENVIRONMENT` | `local` |
+| `FLOWFORGE_COORDINATION_LEASE_DURATION` | `30s` |
+| `FLOWFORGE_COORDINATION_TTL_PADDING` | `2m` |
 | `FLOWFORGE_INSTANCE_ID` | Generated per process |
 | `FLOWFORGE_WORKER_ID` | Generated per process |
 | `FLOWFORGE_WORKER_GROUP` | `flowforge-workers-v1` |
@@ -177,6 +190,7 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 - `flowforge.kafka.dlq.record.age` exposes the recovery-age distribution and maximum observed age; publication, delivery-failure, recovery-failure, and recovered-record counters are tagged by bounded source-topic names.
 - Scheduler replicas claim disjoint due definitions and pending triggers through PostgreSQL row locks. Trigger leases are token-fenced, and replay uses the same deterministic idempotency key, so a crash cannot create a second logical workflow execution.
 - A stale recurring schedule creates at most one catch-up execution per poll. `SKIP` records the missed occurrence without execution; both policies advance directly to the first future cron occurrence to prevent catch-up storms.
+- PostgreSQL serializes authoritative permit capacity per resource. Redis stores only an expiring, atomically maintained mirror; loss or eviction can reduce coordination efficiency but cannot grant capacity beyond the durable ledger.
 
 ## API
 

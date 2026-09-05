@@ -8,6 +8,15 @@ spring:
     hikari:
       maximum-pool-size: ${FLOWFORGE_DB_POOL_SIZE:10}
       connection-timeout: 3000
+  data:
+    redis:
+      host: ${FLOWFORGE_REDIS_HOST:localhost}
+      port: ${FLOWFORGE_REDIS_PORT:6379}
+      password: ${FLOWFORGE_REDIS_PASSWORD:}
+      connect-timeout: ${FLOWFORGE_REDIS_CONNECT_TIMEOUT:2s}
+      timeout: ${FLOWFORGE_REDIS_COMMAND_TIMEOUT:2s}
+      repositories:
+        enabled: false
   flyway:
     validate-migration-naming: true
     baseline-on-migrate: true
@@ -47,6 +56,9 @@ management:
   info:
     env:
       enabled: true
+  health:
+    redis:
+      enabled: ${FLOWFORGE_COORDINATION_ENABLED:false}
 
 info:
   app:
@@ -106,3 +118,8 @@ flowforge:
     retry-delay: ${FLOWFORGE_SCHEDULING_RETRY_DELAY:5s}
     misfire-threshold: ${FLOWFORGE_SCHEDULING_MISFIRE_THRESHOLD:1m}
     instance-id: ${FLOWFORGE_SCHEDULER_INSTANCE_ID:${spring.application.name}-${random.uuid}}
+  coordination:
+    enabled: ${FLOWFORGE_COORDINATION_ENABLED:false}
+    namespace: ${FLOWFORGE_ENVIRONMENT:local}
+    lease-duration: ${FLOWFORGE_COORDINATION_LEASE_DURATION:30s}
+    ttl-padding: ${FLOWFORGE_COORDINATION_TTL_PADDING:2m}

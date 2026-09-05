@@ -68,7 +68,7 @@ Implemented checkpoint:
 
 ### Slice 5.3: Redis coordination foundation
 
-Status: **NEXT**
+Status: **COMPLETED**
 
 - Add Redis to the local environment and health/metrics configuration.
 - Implement token-owned leased permits and atomic Lua acquire/renew/release operations.
@@ -78,9 +78,21 @@ Status: **NEXT**
 
 Exit: Redis improves coordination latency but its total loss cannot violate durable execution or schedule correctness.
 
+Implemented checkpoint:
+
+- Added ephemeral Redis 7.4 to the local Compose environment and production-only coordination activation.
+- Added a PostgreSQL permit ledger that serializes capacity decisions per resource and expires leases durably.
+- Implemented atomic Redis Lua acquire, renew, release, replacement, expiry cleanup, and active-count operations.
+- Added token ownership, bounded lease durations, bounded key TTLs, environment namespaces, and hashed resource keys.
+- Kept PostgreSQL authoritative: Redis failures are metered and do not revoke a successfully persisted permit.
+- Added explicit reconstruction from active PostgreSQL permits after Redis key eviction, restart, or failover.
+- Added Redis health configuration and metrics for degraded operations, reconciliations, and rebuilt permit counts.
+- Verified concurrent PostgreSQL and Redis capacity enforcement, holder idempotency, stale-token rejection, expiry, complete Redis key loss, and outage-safe acquisition.
+- Verified the complete Maven reactor: 156 tests across 53 suites, with no failures, errors, or skipped tests.
+
 ### Slice 5.4: Workflow and task concurrency limits
 
-Status: **PLANNED**
+Status: **NEXT**
 
 - Add versioned per-workflow and per-task concurrency policies.
 - Acquire permits before dispatch and release them on every terminal, timeout, and orphan-recovery path.

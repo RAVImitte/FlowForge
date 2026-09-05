@@ -1,5 +1,9 @@
 package io.flowforge.controlplane.config;
 
+import io.flowforge.application.coordination.CoordinationObserver;
+import io.flowforge.application.coordination.CoordinationPermitLedger;
+import io.flowforge.application.coordination.CoordinationPermitService;
+import io.flowforge.application.coordination.EphemeralPermitStore;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
@@ -15,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.time.Clock;
@@ -40,6 +45,26 @@ public class ApplicationConfiguration {
             Clock clock
     ) {
         return new WorkflowScheduleService(schedules, workflows, calculator, clock);
+    }
+
+    @Bean
+    @ConditionalOnProperty(prefix = "flowforge.coordination", name = "enabled", havingValue = "true")
+    CoordinationPermitService coordinationPermitService(
+            CoordinationPermitLedger ledger,
+            EphemeralPermitStore ephemeralStore,
+            CoordinationObserver observer,
+            Clock clock,
+            @Value("${flowforge.coordination.lease-duration:30s}") Duration leaseDuration,
+            @Value("${flowforge.coordination.ttl-padding:2m}") Duration ttlPadding
+    ) {
+        return new CoordinationPermitService(
+                ledger,
+                ephemeralStore,
+                observer,
+                clock,
+                leaseDuration,
+                ttlPadding
+        );
     }
 
     @Bean

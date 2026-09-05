@@ -226,9 +226,9 @@ Phase 4 exit criteria are satisfied. Durable schedules, Redis coordination, rate
 
 Status: **IN PROGRESS**
 
-Completed milestones: **Slices 5.1-5.2 - Durable schedule definitions through due-fire recovery**
+Completed milestones: **Slices 5.1-5.3 - Durable scheduling through Redis coordination**
 
-Next milestone: **Slice 5.3 - Redis coordination foundation**
+Next milestone: **Slice 5.4 - Workflow and task concurrency limits**
 
 Detailed implementation plan: [Phase 5 plan](PHASE_5_PLAN.md)
 
@@ -247,14 +247,20 @@ Completed capabilities:
 - Catch-up-once and skip misfire policies with a configurable lateness threshold
 - Automatic one-time schedule completion and recurring next-fire advancement
 - Scheduler lifecycle and failure metrics
+- PostgreSQL-authoritative, token-owned coordination permit ledger
+- Atomic Redis Lua acquire, renew, release, replacement, expiry cleanup, and active-count operations
+- Environment-namespaced, hashed Redis keys with bounded TTLs
+- Redis-loss degradation and explicit reconstruction from active PostgreSQL permits
+- Redis health checks and bounded coordination metrics
 - Domain, cron-calculation, HTTP, and PostgreSQL persistence tests
 
 Verification notes:
 
-- The complete Maven reactor succeeds across 50 suites with 146 tests passing and no failures, errors, or skipped tests.
+- The complete Maven reactor succeeds across 53 suites with 156 tests passing and no failures, errors, or skipped tests.
 - Rancher Desktop-backed PostgreSQL tests verify schedule round trips, lifecycle mutations, unpublished-workflow rejection, and stale-version fencing.
 - Rancher Desktop-backed PostgreSQL tests verify disjoint competing-scheduler batches, deterministic execution identity, expired-lease takeover, and stale-token fencing.
-- Redis remains outside the correctness boundary and is deliberately deferred to Slice 5.3.
+- Rancher Desktop-backed PostgreSQL and Redis tests verify concurrent capacity enforcement, permit ownership, expiry, key TTLs, full Redis key loss, and state reconstruction.
+- Redis remains outside the correctness boundary; workflow and task dispatch begin consuming permits in Slice 5.4.
 
 Planned scope:
 
