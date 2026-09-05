@@ -5,6 +5,7 @@ import io.flowforge.messaging.TaskCommandV1;
 import io.flowforge.worker.config.WorkerProperties;
 import io.flowforge.worker.persistence.CommandReceipt;
 import io.flowforge.worker.persistence.WorkerCommandRepository;
+import io.flowforge.worker.messaging.WorkerHeartbeatPublisher;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,19 +22,22 @@ public class WorkerCommandProcessor {
     private final WorkerProperties worker;
     private final Clock clock;
     private final MeterRegistry meters;
+    private final WorkerHeartbeatPublisher heartbeats;
 
     public WorkerCommandProcessor(
             WorkerCommandRepository repository,
             TaskHandlerRegistry handlers,
             WorkerProperties worker,
             Clock clock,
-            MeterRegistry meters
+            MeterRegistry meters,
+            WorkerHeartbeatPublisher heartbeats
     ) {
         this.repository = repository;
         this.handlers = handlers;
         this.worker = worker;
         this.clock = clock;
         this.meters = meters;
+        this.heartbeats = heartbeats;
     }
 
     public void process(MessageEnvelope<TaskCommandV1> envelope, String rawPayload) {
@@ -45,7 +49,7 @@ public class WorkerCommandProcessor {
         }
 
         WorkerTaskResult result;
-        try {
+        try (WorkerHeartbeatPublisher.HeartbeatHandle ignored = heartbeats.start(envelope.payload())) {
             result = handlers.execute(new TaskExecutionContext(envelope.eventId(), envelope.payload()));
         } catch (RuntimeException failure) {
             LOGGER.warn("Worker handler failed for command {}", envelope.eventId(), failure);

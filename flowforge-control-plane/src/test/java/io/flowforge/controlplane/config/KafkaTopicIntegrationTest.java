@@ -22,7 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
         "flowforge.kafka.enabled=true",
-        "flowforge.execution.dispatch-enabled=false"
+        "flowforge.execution.dispatch-enabled=false",
+        "flowforge.retries.scheduler-enabled=false",
+        "flowforge.timeouts.reaper-enabled=false"
 })
 class KafkaTopicIntegrationTest {
     @Container
@@ -48,7 +50,11 @@ class KafkaTopicIntegrationTest {
             Set<String> names = client.listTopics().names().get(Duration.ofSeconds(10).toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
             assertThat(names).contains(
                     FlowForgeTopics.TASK_COMMANDS_V1,
+                    FlowForgeTopics.TASK_COMMANDS_DLQ_V1,
                     FlowForgeTopics.TASK_RESULTS_V1,
+                    FlowForgeTopics.TASK_RESULTS_DLQ_V1,
+                    FlowForgeTopics.TASK_HEARTBEATS_V1,
+                    FlowForgeTopics.TASK_HEARTBEATS_DLQ_V1,
                     FlowForgeTopics.EXECUTION_EVENTS_V1
             );
             assertThat(client.describeTopics(List.of(FlowForgeTopics.TASK_COMMANDS_V1))

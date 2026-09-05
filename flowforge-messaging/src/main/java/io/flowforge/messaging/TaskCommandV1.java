@@ -11,7 +11,9 @@ public record TaskCommandV1(
         String taskType,
         Map<String, Object> configuration,
         long expectedStateVersion,
-        int attemptNumber
+        int attemptNumber,
+        UUID fencingToken,
+        Long attemptTimeoutMs
 ) {
     public static final String EVENT_TYPE = "flowforge.task.command";
     public static final int SCHEMA_VERSION = 1;
@@ -24,5 +26,30 @@ public record TaskCommandV1(
         configuration = ContractValidation.immutableConfiguration(configuration);
         if (expectedStateVersion < 0) throw new IllegalArgumentException("expectedStateVersion must not be negative");
         if (attemptNumber < 1) throw new IllegalArgumentException("attemptNumber must be positive");
+        if (attemptTimeoutMs != null && attemptTimeoutMs < 1) {
+            throw new IllegalArgumentException("attemptTimeoutMs must be positive when configured");
+        }
+    }
+
+    public TaskCommandV1(
+            UUID workflowExecutionId,
+            UUID taskExecutionId,
+            String taskKey,
+            String taskType,
+            Map<String, Object> configuration,
+            long expectedStateVersion,
+            int attemptNumber
+    ) {
+        this(
+                workflowExecutionId,
+                taskExecutionId,
+                taskKey,
+                taskType,
+                configuration,
+                expectedStateVersion,
+                attemptNumber,
+                null,
+                null
+        );
     }
 }

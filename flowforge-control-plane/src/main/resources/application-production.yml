@@ -9,3 +9,6 @@ flowforge:
     require-active-dispatcher: true
   results:
     consumer-enabled: true
+  leases:
+    heartbeat-consumer-enabled: true
+    reaper-enabled: true

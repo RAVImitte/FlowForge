@@ -4,6 +4,7 @@ import io.flowforge.application.workflow.WorkflowRepository;
 import io.flowforge.application.workflow.WorkflowService;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.WorkflowDefinition;
+import io.flowforge.domain.workflow.WorkflowDraft;
 import io.flowforge.domain.workflow.WorkflowLifecycleStatus;
 import io.flowforge.domain.workflow.WorkflowVersionStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -64,6 +65,44 @@ class WorkflowControllerTest {
     }
 
     @Test
+    void acceptsAndReturnsAnExplicitReliabilityPolicy() throws Exception {
+        String request = """
+                {
+                  "name": "Reliable order processing",
+                  "tasks": [{
+                    "key": "PROCESS_PAYMENT",
+                    "name": "Process payment",
+                    "type": "HTTP",
+                    "reliabilityPolicy": {
+                      "maxAttempts": 5,
+                      "initialBackoffMs": 1000,
+                      "backoffMultiplier": 2.0,
+                      "maxBackoffMs": 60000,
+                      "jitterFactor": 0.25,
+                      "attemptTimeoutMs": 30000,
+                      "retryableErrorCodes": ["timeout", "gateway_unavailable"]
+                    }
+                  }],
+                  "dependencies": []
+                }
+                """;
+        when(repository.create(any())).thenAnswer(invocation -> {
+            WorkflowDraft draft = invocation.getArgument(0, WorkflowDraft.class);
+            return workflow(draft.tasks().getFirst());
+        });
+
+        mvc.perform(post("/api/v1/workflows")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(request))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.tasks[0].reliabilityPolicy.maxAttempts").value(5))
+                .andExpect(jsonPath("$.tasks[0].reliabilityPolicy.initialBackoffMs").value(1000))
+                .andExpect(jsonPath("$.tasks[0].reliabilityPolicy.attemptTimeoutMs").value(30000))
+                .andExpect(jsonPath("$.tasks[0].reliabilityPolicy.retryableErrorCodes")
+                        .isArray());
+    }
+
+    @Test
     void requiresIfMatchForMutation() throws Exception {
         mvc.perform(put("/api/v1/workflows/" + WORKFLOW_ID)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -97,6 +136,10 @@ class WorkflowControllerTest {
     }
 
     private static WorkflowDefinition workflow() {
+        return workflow(new TaskDefinition("VALIDATE_ORDER", "Validate order", "NOOP", Map.of()));
+    }
+
+    private static WorkflowDefinition workflow(TaskDefinition task) {
         Instant now = Instant.parse("2026-08-28T10:00:00Z");
         return new WorkflowDefinition(
                 WORKFLOW_ID,
@@ -106,7 +149,7 @@ class WorkflowControllerTest {
                 WorkflowVersionStatus.DRAFT,
                 "Order processing",
                 null,
-                List.of(new TaskDefinition("VALIDATE_ORDER", "Validate order", "NOOP", Map.of())),
+                List.of(task),
                 List.of(),
                 now,
                 now,

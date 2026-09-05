@@ -92,7 +92,13 @@ public class WorkflowController {
     private static WorkflowDraft toDraft(WorkflowRequest request) {
         List<TaskDefinition> tasks = request.tasks().stream()
                 .map(task -> new TaskDefinition(
-                        task.key(), task.name(), task.type(), task.configuration()
+                        task.key(),
+                        task.name(),
+                        task.type(),
+                        task.configuration(),
+                        task.reliabilityPolicy() == null
+                                ? null
+                                : task.reliabilityPolicy().toDomain()
                 ))
                 .toList();
         List<TaskDependency> dependencies = request.dependencies() == null

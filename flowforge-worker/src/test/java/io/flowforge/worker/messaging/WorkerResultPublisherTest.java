@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -30,20 +31,28 @@ class WorkerResultPublisherTest {
     private static final Instant NOW = Instant.parse("2026-09-04T12:00:00Z");
 
     @Test
-    void releasesKnownKafkaFailuresForImmediateRetry() {
+    void publishesTheStableResultAfterBrokerRecovery() {
         WorkerResultOutboxRepository repository = mock(WorkerResultOutboxRepository.class);
         KafkaTemplate<String, String> kafka = kafkaTemplate();
         WorkerResultMessage message = message();
         when(repository.claimBatch(anyInt(), any(String.class), any(Instant.class), any(Duration.class)))
+                .thenReturn(List.of(message))
                 .thenReturn(List.of(message));
         when(kafka.send(any(ProducerRecord.class)))
-                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker unavailable")));
+                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker unavailable")))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        when(repository.markPublished(message.id(), message.claimToken(), NOW)).thenReturn(true);
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        WorkerResultPublisher publisher = publisher(repository, kafka, meters, Duration.ofSeconds(1));
 
-        assertThat(publisher(repository, kafka, meters, Duration.ofSeconds(1)).publishAvailable()).isZero();
+        assertThat(publisher.publishAvailable()).isZero();
+        assertThat(publisher.publishAvailable()).isEqualTo(1);
 
         verify(repository).release(message.id(), message.claimToken(), NOW, "broker unavailable");
+        verify(kafka, times(2)).send(any(ProducerRecord.class));
+        verify(repository).markPublished(message.id(), message.claimToken(), NOW);
         assertThat(meters.counter("flowforge.worker.results.publish.failures").count()).isEqualTo(1);
+        assertThat(meters.counter("flowforge.worker.results.published").count()).isEqualTo(1);
     }
 
     @Test
@@ -64,20 +73,26 @@ class WorkerResultPublisherTest {
     }
 
     @Test
-    void retainsLeaseWhenKafkaAckCannotBePersisted() {
+    void replaysTheStableResultAfterDatabaseRecoveryWhenKafkaAckCannotBePersisted() {
         WorkerResultOutboxRepository repository = mock(WorkerResultOutboxRepository.class);
         KafkaTemplate<String, String> kafka = kafkaTemplate();
         WorkerResultMessage message = message();
         when(repository.claimBatch(anyInt(), any(String.class), any(Instant.class), any(Duration.class)))
+                .thenReturn(List.of(message))
                 .thenReturn(List.of(message));
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
         when(repository.markPublished(message.id(), message.claimToken(), NOW))
-                .thenThrow(new IllegalStateException("database unavailable"));
+                .thenThrow(new IllegalStateException("database unavailable"))
+                .thenReturn(true);
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        WorkerResultPublisher publisher = publisher(repository, kafka, meters, Duration.ofSeconds(1));
 
-        assertThat(publisher(repository, kafka, meters, Duration.ofSeconds(1)).publishAvailable()).isZero();
+        assertThat(publisher.publishAvailable()).isZero();
+        assertThat(publisher.publishAvailable()).isEqualTo(1);
 
+        verify(kafka, times(2)).send(any(ProducerRecord.class));
+        verify(repository, times(2)).markPublished(message.id(), message.claimToken(), NOW);
         verify(repository, never()).release(any(), any(), any(), any());
         assertThat(meters.counter("flowforge.worker.results.acknowledgement.failures").count()).isEqualTo(1);
     }

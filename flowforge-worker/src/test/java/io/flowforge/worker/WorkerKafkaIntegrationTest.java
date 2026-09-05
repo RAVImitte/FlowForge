@@ -7,6 +7,7 @@ import io.flowforge.messaging.TaskResultOutcomeV1;
 import io.flowforge.messaging.TaskResultV1;
 import io.flowforge.worker.application.WorkerTaskHandler;
 import io.flowforge.worker.application.WorkerTaskResult;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
@@ -24,6 +25,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
+import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -49,7 +51,10 @@ import static org.assertj.core.api.Assertions.assertThat;
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
                 "flowforge.worker.id=worker-kafka-test",
-                "flowforge.worker.execution.result-poll-interval-ms=50"
+                "flowforge.worker.execution.result-poll-interval-ms=50",
+                "flowforge.kafka.recovery.max-retries=1",
+                "flowforge.kafka.recovery.initial-backoff=10ms",
+                "flowforge.kafka.recovery.max-backoff=10ms"
         }
 )
 @Testcontainers(disabledWithoutDocker = true)
@@ -85,6 +90,9 @@ class WorkerKafkaIntegrationTest {
     @Autowired
     AtomicInteger handlerExecutions;
 
+    @Autowired
+    MeterRegistry meters;
+
     @Test
     void reportsKafkaAndWorkerReadiness() {
         HealthIndicator kafka = context.getBean("kafka", HealthIndicator.class);
@@ -98,6 +106,7 @@ class WorkerKafkaIntegrationTest {
     @Test
     void storesCommandBeforeExecutionAndReusesResultForDuplicateDelivery() throws Exception {
         waitForListenerAssignment();
+        int executionsBefore = handlerExecutions.get();
         UUID workflowId = UUID.randomUUID();
         UUID taskId = UUID.randomUUID();
         MessageEnvelope<TaskCommandV1> command = new MessageEnvelope<>(
@@ -120,9 +129,12 @@ class WorkerKafkaIntegrationTest {
 
             awaitCompleted(command.eventId(), Duration.ofSeconds(15));
             var records = results.poll(Duration.ofSeconds(10));
-            assertThat(records.count()).isEqualTo(1);
+            var matching = java.util.stream.StreamSupport.stream(records.spliterator(), false)
+                    .filter(record -> workflowId.toString().equals(header(record, "flowforge-correlation-id")))
+                    .toList();
+            assertThat(matching).hasSize(1);
             MessageEnvelope<TaskResultV1> result = objectMapper.readValue(
-                    records.iterator().next().value(),
+                    matching.getFirst().value(),
                     new TypeReference<MessageEnvelope<TaskResultV1>>() {
                     }
             );
@@ -130,11 +142,66 @@ class WorkerKafkaIntegrationTest {
             assertThat(results.poll(Duration.ofSeconds(1)).isEmpty()).isTrue();
         }
 
-        assertThat(handlerExecutions.get()).isEqualTo(1);
+        assertThat(handlerExecutions.get()).isEqualTo(executionsBefore + 1);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM worker_command_inbox WHERE event_id = :eventId")
                 .param("eventId", command.eventId()).query(Long.class).single()).isEqualTo(1);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM worker_result_outbox WHERE command_event_id = :eventId")
                 .param("eventId", command.eventId()).query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void deadLettersPoisonCommandThenContinuesThePartition() throws Exception {
+        waitForListenerAssignment();
+        int executionsBefore = handlerExecutions.get();
+        UUID workflowId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        MessageEnvelope<TaskCommandV1> valid = new MessageEnvelope<>(
+                UUID.randomUUID(),
+                TaskCommandV1.EVENT_TYPE,
+                TaskCommandV1.SCHEMA_VERSION,
+                Instant.now(),
+                workflowId,
+                new TaskCommandV1(workflowId, taskId, "AFTER_POISON", "COUNTING", Map.of(), 1, 1)
+        );
+
+        try (KafkaConsumer<String, String> deadLetters = deadLetterConsumer();
+             KafkaProducer<String, String> commands = commandProducer()) {
+            deadLetters.subscribe(List.of(FlowForgeTopics.TASK_COMMANDS_DLQ_V1));
+            ProducerRecord<String, String> poison = new ProducerRecord<>(
+                    FlowForgeTopics.TASK_COMMANDS_V1,
+                    taskId.toString(),
+                    "{not-json"
+            );
+            poison.headers().add(
+                    "flowforge-correlation-id",
+                    workflowId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            );
+            commands.send(poison).get(10, TimeUnit.SECONDS);
+            commands.send(new ProducerRecord<>(
+                    FlowForgeTopics.TASK_COMMANDS_V1,
+                    taskId.toString(),
+                    objectMapper.writeValueAsString(valid)
+            )).get(10, TimeUnit.SECONDS);
+
+            var deadLetter = awaitDeadLetter(deadLetters, Duration.ofSeconds(15));
+            assertThat(deadLetter.topic()).isEqualTo(FlowForgeTopics.TASK_COMMANDS_DLQ_V1);
+            assertThat(deadLetter.key()).isEqualTo(taskId.toString());
+            assertThat(deadLetter.value()).isEqualTo("{not-json");
+            assertThat(header(deadLetter, KafkaHeaders.DLT_ORIGINAL_TOPIC))
+                    .isEqualTo(FlowForgeTopics.TASK_COMMANDS_V1);
+            assertThat(header(deadLetter, "flowforge-correlation-id")).isEqualTo(workflowId.toString());
+            assertThat(header(deadLetter, "flowforge-dlq-schema-version")).isEqualTo("1");
+            assertThat(header(deadLetter, "flowforge-dlq-record-id"))
+                    .startsWith(FlowForgeTopics.TASK_COMMANDS_V1 + ":");
+            assertThat(header(deadLetter, "flowforge-dlq-failure-class"))
+                    .endsWith("StreamReadException");
+        }
+
+        awaitCompleted(valid.eventId(), Duration.ofSeconds(15));
+        assertThat(handlerExecutions.get()).isEqualTo(executionsBefore + 1);
+        assertThat(meters.get("flowforge.kafka.dlq.published")
+                .tag("source_topic", FlowForgeTopics.TASK_COMMANDS_V1)
+                .counter().count()).isGreaterThanOrEqualTo(1.0);
     }
 
     private void waitForListenerAssignment() throws InterruptedException {
@@ -184,6 +251,37 @@ class WorkerKafkaIntegrationTest {
         properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         return new KafkaConsumer<>(properties);
+    }
+
+    private static KafkaConsumer<String, String> deadLetterConsumer() {
+        Properties properties = new Properties();
+        properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
+        properties.put(ConsumerConfig.GROUP_ID_CONFIG, "worker-dlq-test-" + UUID.randomUUID());
+        properties.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        properties.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
+        properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        return new KafkaConsumer<>(properties);
+    }
+
+    private static org.apache.kafka.clients.consumer.ConsumerRecord<String, String> awaitDeadLetter(
+            KafkaConsumer<String, String> consumer,
+            Duration timeout
+    ) {
+        Instant deadline = Instant.now().plus(timeout);
+        while (Instant.now().isBefore(deadline)) {
+            var records = consumer.poll(Duration.ofMillis(250));
+            if (!records.isEmpty()) return records.iterator().next();
+        }
+        throw new AssertionError("Poison command was not published to the command DLQ");
+    }
+
+    private static String header(
+            org.apache.kafka.clients.consumer.ConsumerRecord<String, String> record,
+            String name
+    ) {
+        var header = record.headers().lastHeader(name);
+        return header == null ? null : new String(header.value(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

@@ -46,6 +46,8 @@ import static org.assertj.core.api.Assertions.assertThat;
         "flowforge.outbox.publisher-enabled=true",
         "flowforge.outbox.command-dispatch-enabled=false",
         "flowforge.outbox.poll-interval-ms=3600000",
+        "flowforge.retries.scheduler-enabled=false",
+        "flowforge.timeouts.reaper-enabled=false",
         "flowforge.outbox.instance-id=outbox-kafka-test"
 })
 @Testcontainers(disabledWithoutDocker = true)
@@ -125,6 +127,7 @@ class OutboxKafkaIntegrationTest {
             assertThat(commandRecord.key()).isEqualTo(command.payload().taskExecutionId().toString());
             assertThat(command.payload().workflowExecutionId()).isEqualTo(executionId);
             assertThat(command.payload().taskKey()).isEqualTo("ROOT");
+            assertThat(command.payload().fencingToken()).isNotNull();
             assertThat(header(commandRecord.headers().lastHeader("flowforge-event-id")))
                     .isEqualTo(command.eventId().toString());
             assertThat(header(commandRecord.headers().lastHeader("flowforge-correlation-id")))

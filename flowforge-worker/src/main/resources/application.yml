@@ -49,6 +49,12 @@ management:
 flowforge:
   kafka:
     enabled: ${FLOWFORGE_KAFKA_ENABLED:true}
+    recovery:
+      max-retries: ${FLOWFORGE_KAFKA_RECOVERY_MAX_RETRIES:2}
+      initial-backoff: ${FLOWFORGE_KAFKA_RECOVERY_INITIAL_BACKOFF:250ms}
+      backoff-multiplier: ${FLOWFORGE_KAFKA_RECOVERY_BACKOFF_MULTIPLIER:2.0}
+      max-backoff: ${FLOWFORGE_KAFKA_RECOVERY_MAX_BACKOFF:2s}
+      publish-timeout: ${FLOWFORGE_KAFKA_DLQ_PUBLISH_TIMEOUT:10s}
   worker:
     id: ${FLOWFORGE_WORKER_ID:${spring.application.name}-${random.uuid}}
     consumer-group: ${FLOWFORGE_WORKER_GROUP:flowforge-workers-v1}
@@ -60,3 +66,4 @@ flowforge:
       result-poll-interval-ms: ${FLOWFORGE_WORKER_RESULT_POLL_INTERVAL_MS:250}
       result-lease-duration: ${FLOWFORGE_WORKER_RESULT_LEASE_DURATION:30s}
       result-publish-timeout: ${FLOWFORGE_WORKER_RESULT_PUBLISH_TIMEOUT:10s}
+      heartbeat-interval: ${FLOWFORGE_WORKER_HEARTBEAT_INTERVAL:10s}

@@ -62,7 +62,9 @@ public class TaskResultConsumer {
                             payload.attemptNumber(),
                             TaskOutcome.valueOf(payload.outcome().name()),
                             payload.errorCode(),
-                            payload.errorMessage()
+                            payload.errorMessage(),
+                            payload.retryable(),
+                            payload.fencingToken()
                     ),
                     record.value(),
                     clock.instant()

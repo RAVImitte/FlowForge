@@ -8,6 +8,7 @@ import io.flowforge.application.workflow.WorkflowNotFoundException;
 import io.flowforge.application.workflow.WorkflowRepository;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
+import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 import io.flowforge.domain.workflow.WorkflowDraft;
 import io.flowforge.domain.workflow.WorkflowLifecycleStatus;
@@ -17,11 +18,13 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Repository
@@ -238,10 +241,14 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
             TaskDefinition task = draft.tasks().get(position);
             jdbc.sql("""
                     INSERT INTO workflow_task(
-                        id, workflow_version_id, task_key, task_name, task_type, configuration, position
+                        id, workflow_version_id, task_key, task_name, task_type, configuration, position,
+                        max_attempts, initial_backoff_ms, backoff_multiplier, max_backoff_ms,
+                        jitter_factor, attempt_timeout_ms, retryable_error_codes
                     ) VALUES (
                         :id, :versionId, :taskKey, :taskName, :taskType,
-                        CAST(:configuration AS jsonb), :position
+                        CAST(:configuration AS jsonb), :position,
+                        :maxAttempts, :initialBackoffMs, :backoffMultiplier, :maxBackoffMs,
+                        :jitterFactor, :attemptTimeoutMs, CAST(:retryableErrorCodes AS jsonb)
                     )
                     """)
                     .param("id", UUID.randomUUID())
@@ -251,6 +258,15 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                     .param("taskType", task.type())
                     .param("configuration", toJson(task.configuration()))
                     .param("position", position)
+                    .param("maxAttempts", task.reliabilityPolicy().maxAttempts())
+                    .param("initialBackoffMs", task.reliabilityPolicy().initialBackoff().toMillis())
+                    .param("backoffMultiplier", task.reliabilityPolicy().backoffMultiplier())
+                    .param("maxBackoffMs", task.reliabilityPolicy().maxBackoff().toMillis())
+                    .param("jitterFactor", task.reliabilityPolicy().jitterFactor())
+                    .param("attemptTimeoutMs", task.reliabilityPolicy().attemptTimeout() == null
+                            ? null
+                            : task.reliabilityPolicy().attemptTimeout().toMillis())
+                    .param("retryableErrorCodes", toJson(task.reliabilityPolicy().retryableErrorCodes()))
                     .update();
         }
         for (TaskDependency dependency : draft.dependencies()) {
@@ -268,7 +284,9 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
 
     private List<TaskDefinition> loadTasks(UUID versionId) {
         return jdbc.sql("""
-                SELECT task_key, task_name, task_type, configuration
+                SELECT task_key, task_name, task_type, configuration,
+                       max_attempts, initial_backoff_ms, backoff_multiplier, max_backoff_ms,
+                       jitter_factor, attempt_timeout_ms, retryable_error_codes
                   FROM workflow_task
                  WHERE workflow_version_id = :versionId
                  ORDER BY position
@@ -278,7 +296,16 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                         rs.getString("task_key"),
                         rs.getString("task_name"),
                         rs.getString("task_type"),
-                        fromJson(rs.getString("configuration"))
+                        fromJson(rs.getString("configuration")),
+                        new TaskReliabilityPolicy(
+                                rs.getInt("max_attempts"),
+                                Duration.ofMillis(rs.getLong("initial_backoff_ms")),
+                                rs.getDouble("backoff_multiplier"),
+                                Duration.ofMillis(rs.getLong("max_backoff_ms")),
+                                rs.getDouble("jitter_factor"),
+                                nullableDuration(rs.getObject("attempt_timeout_ms")),
+                                stringSetFromJson(rs.getString("retryable_error_codes"))
+                        )
                 ))
                 .list();
     }
@@ -298,7 +325,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                 .list();
     }
 
-    private String toJson(Map<String, Object> value) {
+    private String toJson(Object value) {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JacksonException exception) {
@@ -313,6 +340,19 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
         } catch (JacksonException exception) {
             throw new IllegalStateException("Stored task configuration is invalid", exception);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<String> stringSetFromJson(String value) {
+        try {
+            return Set.copyOf(objectMapper.readValue(value, Set.class));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Stored retryable error codes are invalid", exception);
+        }
+    }
+
+    private static Duration nullableDuration(Object value) {
+        return value == null ? null : Duration.ofMillis(((Number) value).longValue());
     }
 
     private static Instant instant(Object value) {

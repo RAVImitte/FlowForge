@@ -11,6 +11,7 @@ public class DispatchTopologyValidator implements InitializingBean {
     private final boolean commandDispatchEnabled;
     private final boolean outboxPublisherEnabled;
     private final boolean resultConsumerEnabled;
+    private final boolean heartbeatConsumerEnabled;
     private final boolean activeDispatcherRequired;
 
     public DispatchTopologyValidator(
@@ -19,6 +20,7 @@ public class DispatchTopologyValidator implements InitializingBean {
             @Value("${flowforge.outbox.command-dispatch-enabled:false}") boolean commandDispatchEnabled,
             @Value("${flowforge.outbox.publisher-enabled:false}") boolean outboxPublisherEnabled,
             @Value("${flowforge.results.consumer-enabled:false}") boolean resultConsumerEnabled,
+            @Value("${flowforge.leases.heartbeat-consumer-enabled:false}") boolean heartbeatConsumerEnabled,
             @Value("${flowforge.execution.require-active-dispatcher:false}") boolean activeDispatcherRequired
     ) {
         this.kafkaEnabled = kafkaEnabled;
@@ -26,6 +28,7 @@ public class DispatchTopologyValidator implements InitializingBean {
         this.commandDispatchEnabled = commandDispatchEnabled;
         this.outboxPublisherEnabled = outboxPublisherEnabled;
         this.resultConsumerEnabled = resultConsumerEnabled;
+        this.heartbeatConsumerEnabled = heartbeatConsumerEnabled;
         this.activeDispatcherRequired = activeDispatcherRequired;
     }
 
@@ -39,7 +42,8 @@ public class DispatchTopologyValidator implements InitializingBean {
         if (activeDispatcherRequired && !inProcessDispatchEnabled && !commandDispatchEnabled) {
             throw new IllegalStateException("An active task dispatcher is required");
         }
-        if (!kafkaEnabled && (commandDispatchEnabled || outboxPublisherEnabled || resultConsumerEnabled)) {
+        if (!kafkaEnabled && (commandDispatchEnabled || outboxPublisherEnabled
+                || resultConsumerEnabled || heartbeatConsumerEnabled)) {
             throw new IllegalStateException("Kafka-backed components require flowforge.kafka.enabled=true");
         }
         if (commandDispatchEnabled && !outboxPublisherEnabled) {
@@ -47,6 +51,9 @@ public class DispatchTopologyValidator implements InitializingBean {
         }
         if (commandDispatchEnabled && !resultConsumerEnabled) {
             throw new IllegalStateException("Kafka command dispatch requires the task-result consumer");
+        }
+        if (commandDispatchEnabled && !heartbeatConsumerEnabled) {
+            throw new IllegalStateException("Kafka command dispatch requires the task-heartbeat consumer");
         }
     }
 }

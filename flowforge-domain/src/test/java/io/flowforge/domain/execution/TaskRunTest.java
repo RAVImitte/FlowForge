@@ -95,4 +95,37 @@ class TaskRunTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("transition time must not precede start time");
     }
+
+    @Test
+    void schedulesAndReleasesADurableRetryWithoutLosingTheFirstStartTime() {
+        Instant startedAt = CREATED_AT.plusSeconds(1);
+        Instant failedAt = CREATED_AT.plusSeconds(2);
+        Instant retryAt = CREATED_AT.plusSeconds(12);
+        TaskRun running = TaskRun.ready(TASK_RUN_ID, WORKFLOW_RUN_ID, "TASK", CREATED_AT)
+                .transitionTo(TaskRunStatus.RUNNING, startedAt);
+
+        TaskRun scheduled = running.scheduleRetry(failedAt, retryAt);
+        TaskRun readyAgain = scheduled.transitionTo(TaskRunStatus.READY, retryAt);
+        TaskRun runningAgain = readyAgain.transitionTo(TaskRunStatus.RUNNING, retryAt);
+
+        assertThat(scheduled.status()).isEqualTo(TaskRunStatus.RETRY_SCHEDULED);
+        assertThat(scheduled.nextAttemptAt()).isEqualTo(retryAt);
+        assertThat(readyAgain.nextAttemptAt()).isNull();
+        assertThat(runningAgain.startedAt()).isEqualTo(startedAt);
+        assertThat(runningAgain.stateVersion()).isEqualTo(4);
+    }
+
+    @Test
+    void rejectsRetrySchedulingWithoutARunningAttemptOrWithAPastDueTime() {
+        TaskRun ready = TaskRun.ready(TASK_RUN_ID, WORKFLOW_RUN_ID, "TASK", CREATED_AT);
+
+        assertThatThrownBy(() -> ready.scheduleRetry(CREATED_AT.plusSeconds(1), CREATED_AT.plusSeconds(2)))
+                .isInstanceOf(InvalidStateTransitionException.class);
+
+        TaskRun running = ready.transitionTo(TaskRunStatus.RUNNING, CREATED_AT.plusSeconds(1));
+        assertThatThrownBy(() -> running.scheduleRetry(
+                CREATED_AT.plusSeconds(3), CREATED_AT.plusSeconds(2)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("retryAt must not precede the scheduling time");
+    }
 }

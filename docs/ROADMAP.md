@@ -15,7 +15,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 | Phase 1 | COMPLETED | Project foundation and versioned workflow definitions |
 | Phase 2 | COMPLETED | Workflow state machine, execution, and DAG resolution |
 | Phase 3 | COMPLETED | Kafka messaging, transactional outbox, and distributed workers |
-| Phase 4 | PLANNED | Retries, timeouts, dead-letter queues, and failure recovery |
+| Phase 4 | COMPLETED | Retries, timeouts, dead-letter queues, and failure recovery |
 | Phase 5 | PLANNED | Durable scheduling, Redis coordination, and backpressure |
 | Phase 6 | PLANNED | Observability, scalability validation, and resilience testing |
 | Phase 7 | PLANNED | Security, delivery automation, and operational readiness |
@@ -166,17 +166,61 @@ Planned scope:
 
 ## Phase 4: Reliability and failure recovery
 
-Status: **PLANNED**
+Status: **COMPLETED**
 
-Planned scope:
+Completed milestones: **Slices 4.1-4.6 - Reliability policy foundation through resilience verification and operations**
 
-- Configurable retry policies with exponential backoff and jitter
-- Durable delayed retries and task deadlines
-- Task and workflow timeouts
-- Worker heartbeats, leases, fencing tokens, and stale-result rejection
-- Poison-message and exhausted-task dead-letter queues
-- Orphaned-work recovery after worker or orchestrator failure
-- Failure-injection and duplicate-delivery tests
+Next milestone: **Phase 5 planning - Durable scheduling and coordination**
+
+Detailed implementation plan: [Phase 4 plan](PHASE_4_PLAN.md)
+
+Completed capabilities:
+
+- Versioned, persisted per-task retry, backoff, timeout, and retry-classification policies
+- Durable `RETRY_SCHEDULED` task state and persisted `next_attempt_at` timestamps
+- Deterministic exponential backoff with caps and bounded jitter
+- Atomic attempt failure, retry decision, state transition, and lifecycle-event persistence
+- Horizontally safe due-retry release using bounded `FOR UPDATE SKIP LOCKED` claims
+- Retry attempt creation only after the persisted due time
+- Retry scheduled, ready, started, and exhausted lifecycle events
+- Commit-aware retry counters, backoff distribution, scheduler release, and failure metrics
+- Backward-compatible Kafka command/result contracts carrying reliability metadata
+- PostgreSQL tests for restart-safe timing, exhaustion, classification, and concurrent schedulers
+- Persisted per-attempt deadlines set atomically when work is claimed
+- Horizontally safe timeout recovery with bounded `FOR UPDATE SKIP LOCKED` claims
+- Timeout recovery routed through the same retry, backoff, exhaustion, and workflow-failure path
+- State-version rejection of late results from timed-out or superseded attempts
+- Attempt-timeout lifecycle events and commit-aware task, retry, terminal, and workflow metrics
+- PostgreSQL tests for deadline boundaries, timeout retries, terminal timeouts, late results, and competing reapers
+- Unique per-attempt fencing tokens propagated through commands, heartbeats, results, and completion
+- Renewable PostgreSQL worker leases with immediate and periodic versioned heartbeats
+- Transactionally idempotent heartbeat ingestion with stale-attempt and stale-token rejection
+- Horizontally safe orphan recovery through bounded, workflow-first `FOR UPDATE SKIP LOCKED` claims
+- Common retry, backoff, exhaustion, and workflow-failure handling for expired worker leases
+- PostgreSQL tests for lease renewal, stale-worker fencing, lease-expiry retry, and competing reapers
+- Shared `flowforge-kafka-support` module for consistent consumer recovery semantics across deployables
+- Configurable bounded exponential redelivery for command, result, and heartbeat consumers
+- Separate versioned command, result, and heartbeat transport DLQ topics
+- Broker-acknowledged DLQ publication before source-offset recovery
+- Raw payload, source metadata, correlation-header, failure-class, and deterministic source-record identity preservation
+- Durable `TASK_DEAD_LETTERED` execution events published through the transactional outbox
+- Consumer delivery, recovery, DLQ publication, record-age, exhaustion, and dead-lettered-task metrics
+- Live Kafka poison-record tests proving transport separation and continued partition progress
+- Replacement-process recovery for pending commands, durable worker results, and offline consumers
+- Broker and database publication-failure recovery with stable-ID replay
+- Multi-item concurrency tests proving retry schedulers and timeout reapers claim disjoint work
+- Retry, outage, worker-loss, and safe DLQ replay operational runbooks
+- ADR-004 reliability architecture and failure-ownership decision record
+
+Verification notes:
+
+- The complete Maven reactor succeeds across 44 suites with 128 tests passing and no failures, errors, or skipped tests.
+- Rancher Desktop-backed PostgreSQL tests prove concurrent scheduler and timeout-reaper replicas claim disjoint six-item batches and process each of twelve records exactly once.
+- Rancher Desktop-backed PostgreSQL and Kafka tests pass all three lease/fencing scenarios, including stale-worker rejection and exactly-once recovery under competing reapers.
+- Rancher Desktop-backed Kafka tests route malformed commands, results, and heartbeats to their respective DLQs and continue processing after poison records.
+- Recovery tests verify replacement processes, Kafka publish interruption, PostgreSQL acknowledgement interruption, duplicate delivery, and stale results without message loss or duplicate state transitions.
+
+Phase 4 exit criteria are satisfied. Durable schedules, Redis coordination, rate limiting, and backpressure remain Phase 5 scope.
 
 ## Phase 5: Scheduling and coordination
 

@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 3 adds Kafka-based delivery and independently scalable workers on top of Phase 2's durable PostgreSQL workflow engine.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 4 adds durable retries, deadlines, worker fencing, failure recovery, and poison-message isolation to the Kafka-based execution engine.
 
 ## Current capabilities
 
@@ -21,7 +21,7 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Recover durable ready work through the startup and scheduled dispatch loop
 - Execute deterministic `NOOP`, `DELAY`, and `FAIL` handlers in independently scalable workers
 - Share framework-light, versioned Kafka command and event contracts
-- Provision versioned task-command, task-result, and execution-event topics
+- Provision versioned task-command, task-result, task-heartbeat, and execution-event topics
 - Run independently deployable workers with Kafka and worker health checks
 - Start a single-node Kafka 4.3 KRaft broker through the local Compose environment
 - Persist task commands and execution events through a PostgreSQL transactional outbox
@@ -39,8 +39,16 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Apply result inbox records, task transitions, DAG advancement, events, and downstream commands atomically
 - Reject stale state versions, mismatched task identities, unknown attempts, and reused event IDs
 - Suppress duplicate and concurrent equivalent results without advancing the DAG twice
+- Fence every distributed task attempt with a unique token and renewable PostgreSQL lease
+- Publish worker heartbeats while handlers run and ingest them idempotently
+- Recover orphaned attempts through the durable retry policy with multi-replica-safe lease claims
+- Reject delayed heartbeats and results from workers replaced after lease expiry
+- Retry poison command, result, and heartbeat records with bounded exponential backoff
+- Route exhausted poison records to separate versioned DLQ topics without losing raw payloads or correlation metadata
+- Require broker acknowledgement of each DLQ publication before recovering the source offset
+- Emit durable `TASK_DEAD_LETTERED` events when task retries are exhausted
 
-Phase 3 is complete. Retries, deadlines, DLQs, and worker-lease recovery are next in Phase 4; Redis coordination remains deliberately deferred to Phase 5.
+Phase 4 is complete. Its recovery architecture is verified across process restarts, stale and duplicate delivery, infrastructure publication failures, worker loss, and competing scheduler/reaper replicas. Redis coordination remains deliberately deferred to Phase 5.
 
 ## Prerequisites
 
@@ -95,6 +103,11 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` |
 | `FLOWFORGE_KAFKA_TOPIC_PARTITIONS` | `6` |
 | `FLOWFORGE_KAFKA_TOPIC_REPLICATION_FACTOR` | `1` |
+| `FLOWFORGE_KAFKA_RECOVERY_MAX_RETRIES` | `2` |
+| `FLOWFORGE_KAFKA_RECOVERY_INITIAL_BACKOFF` | `250ms` |
+| `FLOWFORGE_KAFKA_RECOVERY_BACKOFF_MULTIPLIER` | `2.0` |
+| `FLOWFORGE_KAFKA_RECOVERY_MAX_BACKOFF` | `2s` |
+| `FLOWFORGE_KAFKA_DLQ_PUBLISH_TIMEOUT` | `10s` |
 | `FLOWFORGE_OUTBOX_PUBLISHER_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_OUTBOX_COMMAND_DISPATCH_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_OUTBOX_BATCH_SIZE` | `100` |
@@ -105,6 +118,18 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_RESULT_CONSUMER_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_RESULT_CONSUMER_GROUP` | `flowforge-control-plane-results-v1` |
 | `FLOWFORGE_RESULT_ENQUEUE_BATCH_SIZE` | `1000` |
+| `FLOWFORGE_RETRY_SCHEDULER_ENABLED` | `true` |
+| `FLOWFORGE_RETRY_BATCH_SIZE` | `100` |
+| `FLOWFORGE_RETRY_POLL_INTERVAL_MS` | `250` |
+| `FLOWFORGE_TIMEOUT_REAPER_ENABLED` | `true` |
+| `FLOWFORGE_TIMEOUT_BATCH_SIZE` | `100` |
+| `FLOWFORGE_TIMEOUT_POLL_INTERVAL_MS` | `250` |
+| `FLOWFORGE_WORKER_LEASE_DURATION` | `30s` |
+| `FLOWFORGE_HEARTBEAT_CONSUMER_ENABLED` | `false`; production profile: `true` |
+| `FLOWFORGE_HEARTBEAT_CONSUMER_GROUP` | `flowforge-control-plane-heartbeats-v1` |
+| `FLOWFORGE_LEASE_REAPER_ENABLED` | `false`; production profile: `true` |
+| `FLOWFORGE_LEASE_REAPER_BATCH_SIZE` | `100` |
+| `FLOWFORGE_LEASE_REAPER_POLL_INTERVAL_MS` | `250` |
 | `FLOWFORGE_INSTANCE_ID` | Generated per process |
 | `FLOWFORGE_WORKER_ID` | Generated per process |
 | `FLOWFORGE_WORKER_GROUP` | `flowforge-workers-v1` |
@@ -117,6 +142,7 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_WORKER_RESULT_POLL_INTERVAL_MS` | `250` |
 | `FLOWFORGE_WORKER_RESULT_LEASE_DURATION` | `30s` |
 | `FLOWFORGE_WORKER_RESULT_PUBLISH_TIMEOUT` | `10s` |
+| `FLOWFORGE_WORKER_HEARTBEAT_INTERVAL` | `10s` |
 | `FLOWFORGE_KAFKA_HEALTH_TIMEOUT` | `3s` |
 | `FLOWFORGE_WORKER_RESULT_PUBLISHER_ENABLED` | `true` |
 | `PORT` | `8080` |
@@ -126,9 +152,12 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 
 - Task commands are keyed by task execution ID so retries for one task stay ordered while unrelated tasks spread across worker partitions.
 - Task results and execution events are keyed by workflow execution ID so one workflow's state changes remain ordered.
+- Task heartbeats are keyed by task execution ID and can renew only the active attempt's fencing token.
 - Worker and control-plane throughput scales with Kafka partitions; extra instances beyond the partition count provide standby capacity rather than additional active consumers.
 - Delivery is at least once. Durable outboxes prevent loss, inbox keys suppress duplicates, and external task side effects must use the command event ID as their idempotency key.
 - Known publish failures are released for retry. Unknown acknowledgement outcomes wait for the fenced claim lease to expire and may then produce a duplicate with the same event ID.
+- Poison records are retried in place, then copied to a topic-specific V1 DLQ with source topic/partition/offset, raw key/value, failure metadata, and original correlation headers. A crash after DLQ acknowledgement but before source-offset commit may duplicate the deterministic source-record ID.
+- `flowforge.kafka.dlq.record.age` exposes the recovery-age distribution and maximum observed age; publication, delivery-failure, recovery-failure, and recovered-record counters are tagged by bounded source-topic names.
 
 ## API
 
@@ -191,7 +220,8 @@ Example request:
 - `flowforge-domain`: pure Java definition invariants, execution state machines, and DAG policy
 - `flowforge-application`: use cases and outbound repository port
 - `flowforge-messaging`: versioned commands, results, events, and shared topic names
+- `flowforge-kafka-support`: shared bounded-retry, broker-confirmed DLQ publication, metadata, and recovery metrics
 - `flowforge-control-plane`: Spring Boot HTTP, PostgreSQL, transactional-outbox, and Kafka adapters
 - `flowforge-worker`: independently deployable Spring Boot worker process
 
-See the [project roadmap](docs/ROADMAP.md), [ADR-001](docs/adr/001-phase-1-architecture.md), [ADR-002](docs/adr/002-phase-2-execution-architecture.md), and [ADR-003](docs/adr/003-phase-3-distributed-execution.md) for phase status and major design decisions.
+See the [project roadmap](docs/ROADMAP.md), [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md), [ADR-001](docs/adr/001-phase-1-architecture.md), [ADR-002](docs/adr/002-phase-2-execution-architecture.md), [ADR-003](docs/adr/003-phase-3-distributed-execution.md), and [ADR-004](docs/adr/004-phase-4-reliability-and-recovery.md) for phase status, operations, and major design decisions.

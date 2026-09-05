@@ -122,6 +122,10 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
     private void validateAndLockWorkflow(InboundTaskResult result) {
         StoredTask task = jdbc.sql("""
                 SELECT te.workflow_execution_id, te.task_key,
+                       (SELECT ta.fencing_token FROM task_attempt ta
+                            WHERE ta.task_execution_id = te.id
+                              AND ta.attempt_number = :attemptNumber
+                       ) AS fencing_token,
                        EXISTS (
                            SELECT 1 FROM task_attempt ta
                             WHERE ta.task_execution_id = te.id
@@ -137,6 +141,7 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
                 .query((rs, rowNum) -> new StoredTask(
                         rs.getObject("workflow_execution_id", java.util.UUID.class),
                         rs.getString("task_key"),
+                        rs.getObject("fencing_token", java.util.UUID.class),
                         rs.getBoolean("attempt_exists")
                 ))
                 .optional()
@@ -154,8 +159,16 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
                     "Task result references unknown attempt " + result.attemptNumber()
             );
         }
+        if (!java.util.Objects.equals(task.fencingToken(), result.fencingToken())) {
+            throw new ExecutionConflictException("Task result has a stale or missing fencing token");
+        }
     }
 
-    private record StoredTask(java.util.UUID workflowExecutionId, String taskKey, boolean attemptExists) {
+    private record StoredTask(
+            java.util.UUID workflowExecutionId,
+            String taskKey,
+            java.util.UUID fencingToken,
+            boolean attemptExists
+    ) {
     }
 }

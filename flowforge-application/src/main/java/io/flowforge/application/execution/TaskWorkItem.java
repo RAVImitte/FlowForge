@@ -11,7 +11,9 @@ public record TaskWorkItem(
         String taskType,
         Map<String, Object> configuration,
         long stateVersion,
-        int attemptNumber
+        int attemptNumber,
+        UUID fencingToken,
+        Long attemptTimeoutMs
 ) {
     public TaskWorkItem {
         Objects.requireNonNull(workflowRunId, "workflowRunId must not be null");
@@ -21,5 +23,44 @@ public record TaskWorkItem(
         configuration = Map.copyOf(configuration);
         if (stateVersion < 1) throw new IllegalArgumentException("stateVersion must be positive");
         if (attemptNumber < 1) throw new IllegalArgumentException("attemptNumber must be positive");
+        if (attemptTimeoutMs != null && attemptTimeoutMs < 1) {
+            throw new IllegalArgumentException("attemptTimeoutMs must be positive when configured");
+        }
+    }
+
+    public TaskWorkItem(
+            UUID workflowRunId,
+            UUID taskRunId,
+            String taskKey,
+            String taskType,
+            Map<String, Object> configuration,
+            long stateVersion,
+            int attemptNumber
+    ) {
+        this(
+                workflowRunId,
+                taskRunId,
+                taskKey,
+                taskType,
+                configuration,
+                stateVersion,
+                attemptNumber,
+                null,
+                null
+        );
+    }
+
+    public TaskWorkItem(
+            UUID workflowRunId,
+            UUID taskRunId,
+            String taskKey,
+            String taskType,
+            Map<String, Object> configuration,
+            long stateVersion,
+            int attemptNumber,
+            Long attemptTimeoutMs
+    ) {
+        this(workflowRunId, taskRunId, taskKey, taskType, configuration, stateVersion,
+                attemptNumber, null, attemptTimeoutMs);
     }
 }

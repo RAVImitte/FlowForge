@@ -50,6 +50,7 @@ class TaskResultConsumerTest {
         verify(acknowledgment).acknowledge();
         assertThat(result.getValue().eventId()).isEqualTo(envelope.eventId());
         assertThat(result.getValue().outcome()).isEqualTo(TaskOutcome.SUCCEEDED);
+        assertThat(result.getValue().fencingToken()).isEqualTo(envelope.payload().fencingToken());
         assertThat(meters.counter("flowforge.results.consumed", "outcome", "APPLIED").count()).isEqualTo(1);
     }
 
@@ -115,6 +116,8 @@ class TaskResultConsumerTest {
                         1,
                         TaskResultOutcomeV1.SUCCEEDED,
                         null,
+                        null,
+                        UUID.randomUUID(),
                         null
                 )
         );

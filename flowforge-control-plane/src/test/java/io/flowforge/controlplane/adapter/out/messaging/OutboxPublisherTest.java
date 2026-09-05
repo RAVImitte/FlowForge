@@ -19,6 +19,7 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,19 +56,24 @@ class OutboxPublisherTest {
     }
 
     @Test
-    void leavesTheLeaseForReplayWhenKafkaAckCannotBePersisted() throws Exception {
+    void replaysTheStableMessageAfterDatabaseRecoveryWhenKafkaAckCannotBePersisted() throws Exception {
         OutboxMessageRepository repository = mock(OutboxMessageRepository.class);
         OutboxMessageSender sender = mock(OutboxMessageSender.class);
         OutboxMessage message = message();
         when(repository.claimBatch(anyInt(), any(String.class), any(Instant.class), any(Duration.class)))
+                .thenReturn(List.of(message))
                 .thenReturn(List.of(message));
         when(repository.markPublished(message.id(), message.claimToken(), NOW))
-                .thenThrow(new IllegalStateException("database unavailable"));
+                .thenThrow(new IllegalStateException("database unavailable"))
+                .thenReturn(true);
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        OutboxPublisher publisher = publisher(repository, sender, meters);
 
-        assertThat(publisher(repository, sender, meters).publishAvailable()).isZero();
+        assertThat(publisher.publishAvailable()).isZero();
+        assertThat(publisher.publishAvailable()).isEqualTo(1);
 
-        verify(sender).send(message, Duration.ofSeconds(5));
+        verify(sender, times(2)).send(message, Duration.ofSeconds(5));
+        verify(repository, times(2)).markPublished(message.id(), message.claimToken(), NOW);
         verify(repository, never()).release(
                 any(UUID.class), any(UUID.class), any(Instant.class), any(String.class)
         );

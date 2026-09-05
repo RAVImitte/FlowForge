@@ -51,6 +51,20 @@ public class WorkerCommandRepository {
                 .update();
 
         StoredCommand stored = find(envelope.eventId(), false);
+        if (inserted == 0) {
+            boolean samePayload = jdbc.sql("""
+                    SELECT command_payload = CAST(:payload AS jsonb)
+                      FROM worker_command_inbox
+                     WHERE event_id = :eventId
+                    """)
+                    .param("payload", rawPayload)
+                    .param("eventId", envelope.eventId())
+                    .query(Boolean.class)
+                    .single();
+            if (!samePayload) {
+                throw new IllegalStateException("Command event ID was reused with a different payload");
+            }
+        }
         validateIdentity(envelope, stored);
         return new CommandReceipt(
                 inserted == 1,
@@ -86,7 +100,9 @@ public class WorkerCommandRepository {
                         command.attemptNumber(),
                         result.outcome(),
                         result.errorCode(),
-                        result.errorMessage()
+                        result.errorMessage(),
+                        command.fencingToken(),
+                        result.retryable()
                 )
         );
         jdbc.sql("""

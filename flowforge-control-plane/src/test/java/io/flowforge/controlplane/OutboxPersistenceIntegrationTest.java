@@ -37,7 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(properties = {
         "flowforge.execution.dispatch-enabled=false",
         "flowforge.outbox.publisher-enabled=false",
-        "flowforge.outbox.command-dispatch-enabled=false"
+        "flowforge.outbox.command-dispatch-enabled=false",
+        "flowforge.retries.scheduler-enabled=false",
+        "flowforge.timeouts.reaper-enabled=false"
 })
 @Testcontainers(disabledWithoutDocker = true)
 class OutboxPersistenceIntegrationTest {
@@ -99,7 +101,8 @@ class OutboxPersistenceIntegrationTest {
                        payload -> 'payload' ->> 'taskKey' AS task_key,
                        payload -> 'payload' ->> 'taskType' AS task_type,
                        payload -> 'payload' ->> 'expectedStateVersion' AS state_version,
-                       payload -> 'payload' ->> 'attemptNumber' AS attempt_number
+                       payload -> 'payload' ->> 'attemptNumber' AS attempt_number,
+                       payload -> 'payload' ->> 'fencingToken' AS fencing_token
                   FROM control_plane_outbox
                  WHERE workflow_execution_id = :executionId
                    AND message_kind = 'TASK_COMMAND'
@@ -116,6 +119,7 @@ class OutboxPersistenceIntegrationTest {
                 .containsEntry("state_version", "1")
                 .containsEntry("attempt_number", "1");
         assertThat(command.get("event_id")).isNotNull();
+        assertThat(command.get("fencing_token")).isNotNull();
     }
 
     @Test

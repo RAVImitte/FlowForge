@@ -23,10 +23,13 @@ class ProductionProfileTest {
         assertThat(properties.getProperty("flowforge.outbox.publisher-enabled")).isEqualTo("true");
         assertThat(properties.getProperty("flowforge.outbox.command-dispatch-enabled")).isEqualTo("true");
         assertThat(properties.getProperty("flowforge.results.consumer-enabled")).isEqualTo("true");
+        assertThat(properties.getProperty("flowforge.leases.heartbeat-consumer-enabled")).isEqualTo("true");
+        assertThat(properties.getProperty("flowforge.leases.reaper-enabled")).isEqualTo("true");
 
         assertThatCode(() -> new DispatchTopologyValidator(
                 true,
                 false,
+                true,
                 true,
                 true,
                 true,

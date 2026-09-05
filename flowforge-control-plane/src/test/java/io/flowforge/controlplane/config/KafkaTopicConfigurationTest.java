@@ -18,13 +18,21 @@ class KafkaTopicConfigurationTest {
 
         List<NewTopic> topics = List.of(
                 configuration.taskCommandsTopic(properties),
+                configuration.taskCommandsDeadLetterTopic(properties),
                 configuration.taskResultsTopic(properties),
+                configuration.taskResultsDeadLetterTopic(properties),
+                configuration.taskHeartbeatsTopic(properties),
+                configuration.taskHeartbeatsDeadLetterTopic(properties),
                 configuration.executionEventsTopic(properties)
         );
 
         assertThat(topics).extracting(NewTopic::name).containsExactly(
                 FlowForgeTopics.TASK_COMMANDS_V1,
+                FlowForgeTopics.TASK_COMMANDS_DLQ_V1,
                 FlowForgeTopics.TASK_RESULTS_V1,
+                FlowForgeTopics.TASK_RESULTS_DLQ_V1,
+                FlowForgeTopics.TASK_HEARTBEATS_V1,
+                FlowForgeTopics.TASK_HEARTBEATS_DLQ_V1,
                 FlowForgeTopics.EXECUTION_EVENTS_V1
         );
         assertThat(topics).allSatisfy(topic -> {

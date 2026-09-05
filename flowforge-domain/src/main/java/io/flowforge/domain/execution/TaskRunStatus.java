@@ -6,6 +6,7 @@ public enum TaskRunStatus {
     BLOCKED,
     READY,
     RUNNING,
+    RETRY_SCHEDULED,
     SUCCEEDED,
     FAILED,
     TIMED_OUT,
@@ -19,7 +20,9 @@ public enum TaskRunStatus {
             case RUNNING -> target == SUCCEEDED
                     || target == FAILED
                     || target == TIMED_OUT
+                    || target == RETRY_SCHEDULED
                     || target == CANCELLED;
+            case RETRY_SCHEDULED -> target == READY || target == CANCELLED;
             case SUCCEEDED, FAILED, TIMED_OUT, CANCELLED -> false;
         };
     }

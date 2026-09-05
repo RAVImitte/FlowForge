@@ -14,6 +14,7 @@ import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRunStatus;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
+import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 import io.flowforge.domain.workflow.WorkflowDraft;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,8 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +41,11 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest(properties = "flowforge.execution.dispatch-enabled=false")
+@SpringBootTest(properties = {
+        "flowforge.execution.dispatch-enabled=false",
+        "flowforge.retries.scheduler-enabled=false",
+        "flowforge.timeouts.reaper-enabled=false"
+})
 @Testcontainers(disabledWithoutDocker = true)
 class WorkflowExecutionPersistenceIntegrationTest {
     private static final Instant TIME = Instant.parse("2026-09-03T12:00:00Z");
@@ -94,6 +101,38 @@ class WorkflowExecutionPersistenceIntegrationTest {
 
         assertThatThrownBy(() -> executionRepository.start(draft.id(), "request-1", TIME))
                 .isInstanceOf(WorkflowNotPublishedException.class);
+    }
+
+    @Test
+    void materializesAttemptTimeoutIntoDurableAttemptState() {
+        TaskReliabilityPolicy policy = new TaskReliabilityPolicy(
+                3,
+                Duration.ofSeconds(1),
+                2.0,
+                Duration.ofSeconds(10),
+                0.0,
+                Duration.ofSeconds(5),
+                Set.of("TIMEOUT")
+        );
+        WorkflowDefinition published = publish(workflow(
+                List.of(new TaskDefinition("ROOT", "ROOT", "NOOP", Map.of(), policy)),
+                List.of()
+        ));
+        executionRepository.start(published.id(), "attempt-timeout", TIME);
+
+        Instant claimedAt = TIME.plusSeconds(1);
+        TaskWorkItem claimed = onlyClaim(claimedAt);
+        Timestamp deadline = jdbc.sql("""
+                SELECT attempt_deadline
+                  FROM task_attempt
+                 WHERE task_execution_id = :taskId
+                """)
+                .param("taskId", claimed.taskRunId())
+                .query(Timestamp.class)
+                .single();
+
+        assertThat(claimed.attemptTimeoutMs()).isEqualTo(5_000L);
+        assertThat(deadline.toInstant()).isEqualTo(claimedAt.plusSeconds(5));
     }
 
     @Test

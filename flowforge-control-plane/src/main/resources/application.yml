@@ -51,7 +51,7 @@ management:
 info:
   app:
     name: FlowForge
-    phase: 3
+    phase: 4
 
 flowforge:
   kafka:
@@ -59,6 +59,12 @@ flowforge:
     topics:
       partitions: ${FLOWFORGE_KAFKA_TOPIC_PARTITIONS:6}
       replication-factor: ${FLOWFORGE_KAFKA_TOPIC_REPLICATION_FACTOR:1}
+    recovery:
+      max-retries: ${FLOWFORGE_KAFKA_RECOVERY_MAX_RETRIES:2}
+      initial-backoff: ${FLOWFORGE_KAFKA_RECOVERY_INITIAL_BACKOFF:250ms}
+      backoff-multiplier: ${FLOWFORGE_KAFKA_RECOVERY_BACKOFF_MULTIPLIER:2.0}
+      max-backoff: ${FLOWFORGE_KAFKA_RECOVERY_MAX_BACKOFF:2s}
+      publish-timeout: ${FLOWFORGE_KAFKA_DLQ_PUBLISH_TIMEOUT:10s}
   outbox:
     publisher-enabled: ${FLOWFORGE_OUTBOX_PUBLISHER_ENABLED:false}
     command-dispatch-enabled: ${FLOWFORGE_OUTBOX_COMMAND_DISPATCH_ENABLED:false}
@@ -76,3 +82,18 @@ flowforge:
     consumer-enabled: ${FLOWFORGE_RESULT_CONSUMER_ENABLED:false}
     consumer-group: ${FLOWFORGE_RESULT_CONSUMER_GROUP:flowforge-control-plane-results-v1}
     enqueue-batch-size: ${FLOWFORGE_RESULT_ENQUEUE_BATCH_SIZE:1000}
+  retries:
+    scheduler-enabled: ${FLOWFORGE_RETRY_SCHEDULER_ENABLED:true}
+    batch-size: ${FLOWFORGE_RETRY_BATCH_SIZE:100}
+    poll-interval-ms: ${FLOWFORGE_RETRY_POLL_INTERVAL_MS:250}
+  timeouts:
+    reaper-enabled: ${FLOWFORGE_TIMEOUT_REAPER_ENABLED:true}
+    batch-size: ${FLOWFORGE_TIMEOUT_BATCH_SIZE:100}
+    poll-interval-ms: ${FLOWFORGE_TIMEOUT_POLL_INTERVAL_MS:250}
+  leases:
+    duration: ${FLOWFORGE_WORKER_LEASE_DURATION:30s}
+    heartbeat-consumer-enabled: ${FLOWFORGE_HEARTBEAT_CONSUMER_ENABLED:false}
+    heartbeat-consumer-group: ${FLOWFORGE_HEARTBEAT_CONSUMER_GROUP:flowforge-control-plane-heartbeats-v1}
+    reaper-enabled: ${FLOWFORGE_LEASE_REAPER_ENABLED:false}
+    batch-size: ${FLOWFORGE_LEASE_REAPER_BATCH_SIZE:100}
+    poll-interval-ms: ${FLOWFORGE_LEASE_REAPER_POLL_INTERVAL_MS:250}

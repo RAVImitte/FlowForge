@@ -11,7 +11,9 @@ public record TaskResultV1(
         int attemptNumber,
         TaskResultOutcomeV1 outcome,
         String errorCode,
-        String errorMessage
+        String errorMessage,
+        UUID fencingToken,
+        Boolean retryable
 ) {
     public static final String EVENT_TYPE = "flowforge.task.result";
     public static final int SCHEMA_VERSION = 1;
@@ -25,6 +27,30 @@ public record TaskResultV1(
         Objects.requireNonNull(outcome, "outcome must not be null");
         errorCode = normalize(errorCode);
         errorMessage = normalize(errorMessage);
+    }
+
+    public TaskResultV1(
+            UUID workflowExecutionId,
+            UUID taskExecutionId,
+            String taskKey,
+            long expectedStateVersion,
+            int attemptNumber,
+            TaskResultOutcomeV1 outcome,
+            String errorCode,
+            String errorMessage
+    ) {
+        this(
+                workflowExecutionId,
+                taskExecutionId,
+                taskKey,
+                expectedStateVersion,
+                attemptNumber,
+                outcome,
+                errorCode,
+                errorMessage,
+                null,
+                null
+        );
     }
 
     private static String normalize(String value) {

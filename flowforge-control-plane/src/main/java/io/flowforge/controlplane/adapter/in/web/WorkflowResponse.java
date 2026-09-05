@@ -2,6 +2,7 @@ package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
+import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 
 import java.time.Instant;
@@ -40,9 +41,45 @@ public record WorkflowResponse(
         );
     }
 
-    public record TaskResponse(String key, String name, String type, Map<String, Object> configuration) {
+    public record TaskResponse(
+            String key,
+            String name,
+            String type,
+            Map<String, Object> configuration,
+            ReliabilityPolicyResponse reliabilityPolicy
+    ) {
         static TaskResponse from(TaskDefinition task) {
-            return new TaskResponse(task.key(), task.name(), task.type(), task.configuration());
+            return new TaskResponse(
+                    task.key(),
+                    task.name(),
+                    task.type(),
+                    task.configuration(),
+                    task.reliabilityPolicy().isDefault()
+                            ? null
+                            : ReliabilityPolicyResponse.from(task.reliabilityPolicy())
+            );
+        }
+    }
+
+    public record ReliabilityPolicyResponse(
+            int maxAttempts,
+            long initialBackoffMs,
+            double backoffMultiplier,
+            long maxBackoffMs,
+            double jitterFactor,
+            Long attemptTimeoutMs,
+            java.util.Set<String> retryableErrorCodes
+    ) {
+        static ReliabilityPolicyResponse from(TaskReliabilityPolicy policy) {
+            return new ReliabilityPolicyResponse(
+                    policy.maxAttempts(),
+                    policy.initialBackoff().toMillis(),
+                    policy.backoffMultiplier(),
+                    policy.maxBackoff().toMillis(),
+                    policy.jitterFactor(),
+                    policy.attemptTimeout() == null ? null : policy.attemptTimeout().toMillis(),
+                    policy.retryableErrorCodes()
+            );
         }
     }
 

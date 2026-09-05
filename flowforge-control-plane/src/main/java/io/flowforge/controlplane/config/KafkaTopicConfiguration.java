@@ -18,8 +18,28 @@ public class KafkaTopicConfiguration {
     }
 
     @Bean
+    NewTopic taskCommandsDeadLetterTopic(FlowForgeKafkaProperties properties) {
+        return topic(FlowForgeTopics.TASK_COMMANDS_DLQ_V1, properties);
+    }
+
+    @Bean
     NewTopic taskResultsTopic(FlowForgeKafkaProperties properties) {
         return topic(FlowForgeTopics.TASK_RESULTS_V1, properties);
+    }
+
+    @Bean
+    NewTopic taskResultsDeadLetterTopic(FlowForgeKafkaProperties properties) {
+        return topic(FlowForgeTopics.TASK_RESULTS_DLQ_V1, properties);
+    }
+
+    @Bean
+    NewTopic taskHeartbeatsTopic(FlowForgeKafkaProperties properties) {
+        return topic(FlowForgeTopics.TASK_HEARTBEATS_V1, properties);
+    }
+
+    @Bean
+    NewTopic taskHeartbeatsDeadLetterTopic(FlowForgeKafkaProperties properties) {
+        return topic(FlowForgeTopics.TASK_HEARTBEATS_DLQ_V1, properties);
     }
 
     @Bean

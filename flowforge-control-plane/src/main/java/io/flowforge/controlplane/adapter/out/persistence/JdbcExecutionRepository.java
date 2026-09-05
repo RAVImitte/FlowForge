@@ -2,16 +2,21 @@ package io.flowforge.controlplane.adapter.out.persistence;
 
 import io.flowforge.application.execution.ExecutionConflictException;
 import io.flowforge.application.execution.ExecutionNotFoundException;
+import io.flowforge.application.execution.AttemptTimeoutRecovery;
+import io.flowforge.application.execution.AttemptLeaseRecovery;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
+import io.flowforge.application.execution.RetryLifecycleObserver;
 import io.flowforge.application.execution.TaskCompletion;
 import io.flowforge.application.execution.TaskCompletionResult;
 import io.flowforge.application.execution.TaskOutcome;
 import io.flowforge.application.execution.TaskWorkItem;
+import io.flowforge.application.execution.TimeoutLifecycleObserver;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.domain.execution.DagResolver;
 import io.flowforge.domain.execution.ExecutionEvent;
 import io.flowforge.domain.execution.ExecutionEventType;
+import io.flowforge.domain.execution.RetryBackoff;
 import io.flowforge.domain.execution.TaskAttempt;
 import io.flowforge.domain.execution.TaskAttemptStatus;
 import io.flowforge.domain.execution.TaskRun;
@@ -20,11 +25,13 @@ import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRun;
 import io.flowforge.domain.execution.WorkflowRunStatus;
 import io.flowforge.domain.workflow.TaskDependency;
+import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.messaging.ExecutionEventV1;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.JacksonException;
@@ -33,22 +40,40 @@ import tools.jackson.databind.ObjectMapper;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Repository
-public class JdbcExecutionRepository implements ExecutionRepository, DurableTaskQueue {
+public class JdbcExecutionRepository implements ExecutionRepository, DurableTaskQueue, AttemptTimeoutRecovery,
+        AttemptLeaseRecovery {
     private final JdbcClient jdbc;
     private final ObjectMapper objectMapper;
+    private final RetryLifecycleObserver retryObserver;
+    private final TimeoutLifecycleObserver timeoutObserver;
+    private final Duration workerLeaseDuration;
 
-    public JdbcExecutionRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
+    public JdbcExecutionRepository(
+            JdbcClient jdbc,
+            ObjectMapper objectMapper,
+            RetryLifecycleObserver retryObserver,
+            TimeoutLifecycleObserver timeoutObserver,
+            @Value("${flowforge.leases.duration:30s}") Duration workerLeaseDuration
+    ) {
+        if (workerLeaseDuration == null || workerLeaseDuration.isZero() || workerLeaseDuration.isNegative()) {
+            throw new IllegalArgumentException("Worker lease duration must be positive");
+        }
         this.jdbc = jdbc;
         this.objectMapper = objectMapper;
+        this.retryObserver = retryObserver;
+        this.timeoutObserver = timeoutObserver;
+        this.workerLeaseDuration = workerLeaseDuration;
     }
 
     @Override
@@ -173,14 +198,139 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         return candidates.size();
     }
 
+    @Override
+    @Transactional
+    public int releaseDueRetries(int limit, Instant now) {
+        List<TaskRun> due = jdbc.sql("""
+                SELECT te.id, te.workflow_execution_id, te.task_key, te.status, te.state_version,
+                       te.created_at, te.started_at, te.finished_at, te.next_attempt_at
+                  FROM task_execution te
+                  JOIN workflow_execution we ON we.id = te.workflow_execution_id
+                 WHERE te.status = 'RETRY_SCHEDULED'
+                   AND te.next_attempt_at <= :now
+                   AND we.status = 'RUNNING'
+                 ORDER BY te.next_attempt_at, te.id
+                 FOR UPDATE OF we, te SKIP LOCKED
+                 LIMIT :limit
+                """)
+                .param("now", timestamp(now))
+                .param("limit", limit)
+                .query((rs, rowNum) -> mapTaskRun(rs))
+                .list();
+        due.forEach(task -> {
+            TaskRun ready = task.transitionTo(TaskRunStatus.READY, now);
+            updateTask(task, ready);
+            insertEvent(
+                    task.workflowRunId(),
+                    task.id(),
+                    ExecutionEventType.TASK_RETRY_READY,
+                    task.status().name(),
+                    ready.status().name(),
+                    now
+            );
+        });
+        return due.size();
+    }
+
+    @Override
+    @Transactional
+    public int reapTimedOutAttempts(int limit, Instant now) {
+        List<UUID> dueTaskIds = jdbc.sql("""
+                SELECT te.id
+                  FROM workflow_execution we
+                  JOIN task_execution te ON te.workflow_execution_id = we.id
+                  JOIN task_attempt ta
+                    ON ta.task_execution_id = te.id
+                   AND ta.status = 'RUNNING'
+                 WHERE we.status = 'RUNNING'
+                   AND te.status = 'RUNNING'
+                   AND ta.attempt_deadline IS NOT NULL
+                   AND ta.attempt_deadline <= :now
+                 ORDER BY ta.attempt_deadline, te.id
+                 FOR UPDATE OF we, te, ta SKIP LOCKED
+                 LIMIT :limit
+                """)
+                .param("now", timestamp(now))
+                .param("limit", limit)
+                .query(UUID.class)
+                .list();
+
+        dueTaskIds.forEach(taskId -> {
+            WorkflowRun workflow = lockWorkflowForTask(taskId);
+            TaskRun task = lockTask(taskId);
+            completeRunningTask(
+                    workflow,
+                    task,
+                    new TaskCompletion(
+                            task.id(),
+                            task.stateVersion(),
+                            TaskOutcome.TIMED_OUT,
+                            "TASK_TIMEOUT",
+                            "Attempt deadline exceeded",
+                            true
+                    ),
+                    now
+            );
+        });
+        return dueTaskIds.size();
+    }
+
+    @Override
+    @Transactional
+    public int reapExpiredLeases(int limit, Instant now) {
+        List<LeaseCandidate> dueAttempts = jdbc.sql("""
+                SELECT te.id, ta.fencing_token
+                  FROM workflow_execution we
+                  JOIN task_execution te ON te.workflow_execution_id = we.id
+                  JOIN task_attempt ta
+                    ON ta.task_execution_id = te.id
+                   AND ta.status = 'RUNNING'
+                 WHERE we.status = 'RUNNING'
+                   AND te.status = 'RUNNING'
+                   AND ta.lease_deadline IS NOT NULL
+                   AND ta.lease_deadline <= :now
+                   AND (ta.attempt_deadline IS NULL OR ta.attempt_deadline > :now)
+                 ORDER BY ta.lease_deadline, te.id
+                 FOR UPDATE OF we, te, ta SKIP LOCKED
+                 LIMIT :limit
+                """)
+                .param("now", timestamp(now))
+                .param("limit", limit)
+                .query((rs, rowNum) -> new LeaseCandidate(
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("fencing_token", UUID.class)
+                ))
+                .list();
+
+        dueAttempts.forEach(candidate -> {
+            WorkflowRun workflow = lockWorkflowForTask(candidate.taskId());
+            TaskRun task = lockTask(candidate.taskId());
+            completeRunningTask(
+                    workflow,
+                    task,
+                    new TaskCompletion(
+                            task.id(),
+                            task.stateVersion(),
+                            TaskOutcome.FAILED,
+                            "WORKER_LEASE_EXPIRED",
+                            "Worker stopped renewing the attempt lease",
+                            true,
+                            candidate.fencingToken()
+                    ),
+                    now
+            );
+        });
+        return dueAttempts.size();
+    }
+
     private List<ClaimCandidate> claimCandidates(int limit, UUID workflowExecutionId) {
         String workflowFilter = workflowExecutionId == null
                 ? ""
                 : " AND te.workflow_execution_id = :workflowExecutionId\n";
         var query = jdbc.sql("""
                 SELECT te.id, te.workflow_execution_id, te.task_key, te.status, te.state_version,
-                       te.created_at, te.started_at, te.finished_at,
-                       wt.task_type, wt.configuration,
+                       te.created_at, te.started_at, te.finished_at, te.next_attempt_at,
+                       wt.task_type, wt.configuration, wt.attempt_timeout_ms,
                        COALESCE((SELECT MAX(ta.attempt_number)
                                    FROM task_attempt ta
                                   WHERE ta.task_execution_id = te.id), 0) + 1 AS attempt_number
@@ -202,7 +352,10 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                         mapTaskRun(rs),
                         rs.getString("task_type"),
                         fromJson(rs.getString("configuration")),
-                        rs.getInt("attempt_number")
+                        rs.getInt("attempt_number"),
+                        rs.getObject("attempt_timeout_ms") == null
+                                ? null
+                                : rs.getLong("attempt_timeout_ms")
                 ))
                 .list();
     }
@@ -229,9 +382,56 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             );
         }
 
+        if (current.status() != TaskRunStatus.RUNNING) {
+            throw new ExecutionConflictException("Task " + current.id() + " has no active running attempt");
+        }
+
+        WorkflowRun resultingWorkflow = completeRunningTask(workflow, current, completion, now);
+        return new TaskCompletionResult(snapshot(resultingWorkflow), true);
+    }
+
+    private WorkflowRun completeRunningTask(
+            WorkflowRun workflow,
+            TaskRun current,
+            TaskCompletion completion,
+            Instant now
+    ) {
+        TaskRunStatus target = completion.outcome().toTaskStatus();
+        RetryContext retry = loadRetryContext(current.id());
+        if (completion.fencingToken() != null && !completion.fencingToken().equals(retry.fencingToken())) {
+            throw new ExecutionConflictException("Stale fencing token for task " + current.id());
+        }
+        boolean retryableFailure = (completion.outcome() == TaskOutcome.FAILED
+                || completion.outcome() == TaskOutcome.TIMED_OUT)
+                && retry.policy().isRetryable(completion.errorCode(), completion.retryable());
+        if (retryableFailure && retry.attemptNumber() < retry.policy().maxAttempts()) {
+            Duration delay = RetryBackoff.delayAfter(retry.policy(), current.id(), retry.attemptNumber());
+            Instant retryAt = now.plus(delay);
+            TaskRun scheduled = current.scheduleRetry(now, retryAt);
+            updateTask(current, scheduled);
+            completeAttempt(scheduled, completion, now);
+            insertAttemptTimeoutEventIfNeeded(workflow.id(), current, completion, now);
+            insertAttemptLeaseExpiredEventIfNeeded(workflow.id(), current, completion, now);
+            insertEvent(
+                    workflow.id(),
+                    scheduled.id(),
+                    ExecutionEventType.TASK_RETRY_SCHEDULED,
+                    current.status().name(),
+                    scheduled.status().name(),
+                    now
+            );
+            retryObserver.scheduled(delay);
+            if (completion.outcome() == TaskOutcome.TIMED_OUT) {
+                timeoutObserver.attemptTimedOut(true, false);
+            }
+            return workflow;
+        }
+
         TaskRun completed = current.transitionTo(target, now);
         updateTask(current, completed);
         completeAttempt(completed, completion, now);
+        insertAttemptTimeoutEventIfNeeded(workflow.id(), current, completion, now);
+        insertAttemptLeaseExpiredEventIfNeeded(workflow.id(), current, completion, now);
         insertEvent(
                 workflow.id(),
                 completed.id(),
@@ -240,9 +440,72 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 completed.status().name(),
                 now
         );
+        if (retryableFailure && retry.policy().maxAttempts() > 1) {
+            insertEvent(
+                    workflow.id(),
+                    completed.id(),
+                    ExecutionEventType.TASK_RETRY_EXHAUSTED,
+                    current.status().name(),
+                    completed.status().name(),
+                    now
+            );
+            insertEvent(
+                    workflow.id(),
+                    completed.id(),
+                    ExecutionEventType.TASK_DEAD_LETTERED,
+                    current.status().name(),
+                    completed.status().name(),
+                    now
+            );
+            retryObserver.exhausted();
+            retryObserver.deadLettered();
+        }
 
         WorkflowRun resultingWorkflow = advanceWorkflow(workflow, completed, now);
-        return new TaskCompletionResult(snapshot(resultingWorkflow), true);
+        if (completion.outcome() == TaskOutcome.TIMED_OUT) {
+            timeoutObserver.attemptTimedOut(
+                    false,
+                    workflow.status() != WorkflowRunStatus.FAILED
+                            && resultingWorkflow.status() == WorkflowRunStatus.FAILED
+            );
+        }
+        return resultingWorkflow;
+    }
+
+    private void insertAttemptTimeoutEventIfNeeded(
+            UUID workflowId,
+            TaskRun current,
+            TaskCompletion completion,
+            Instant now
+    ) {
+        if (completion.outcome() == TaskOutcome.TIMED_OUT) {
+            insertEvent(
+                    workflowId,
+                    current.id(),
+                    ExecutionEventType.TASK_ATTEMPT_TIMED_OUT,
+                    current.status().name(),
+                    current.status().name(),
+                    now
+            );
+        }
+    }
+
+    private void insertAttemptLeaseExpiredEventIfNeeded(
+            UUID workflowId,
+            TaskRun current,
+            TaskCompletion completion,
+            Instant now
+    ) {
+        if ("WORKER_LEASE_EXPIRED".equals(completion.errorCode())) {
+            insertEvent(
+                    workflowId,
+                    current.id(),
+                    ExecutionEventType.TASK_LEASE_EXPIRED,
+                    current.status().name(),
+                    current.status().name(),
+                    now
+            );
+        }
     }
 
     private void materializeTasks(UUID executionId, UUID versionId, Instant now) {
@@ -292,20 +555,32 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         TaskRun current = candidate.task();
         TaskRun running = current.transitionTo(TaskRunStatus.RUNNING, now);
         updateTask(current, running);
+        UUID fencingToken = UUID.randomUUID();
         jdbc.sql("""
                 INSERT INTO task_attempt(
-                    id, task_execution_id, attempt_number, status, started_at
-                ) VALUES (:id, :taskId, :attemptNumber, 'RUNNING', :startedAt)
+                    id, task_execution_id, attempt_number, status, started_at, attempt_deadline,
+                    lease_deadline, fencing_token
+                ) VALUES (
+                    :id, :taskId, :attemptNumber, 'RUNNING', :startedAt, :attemptDeadline,
+                    :leaseDeadline, :fencingToken
+                )
                 """)
                 .param("id", UUID.randomUUID())
                 .param("taskId", running.id())
                 .param("attemptNumber", candidate.attemptNumber())
                 .param("startedAt", timestamp(now))
+                .param("attemptDeadline", candidate.attemptTimeoutMs() == null
+                        ? null
+                        : timestamp(now.plusMillis(candidate.attemptTimeoutMs())))
+                .param("leaseDeadline", enqueueCommand ? timestamp(now.plus(workerLeaseDuration)) : null)
+                .param("fencingToken", fencingToken)
                 .update();
         insertEvent(
                 running.workflowRunId(),
                 running.id(),
-                ExecutionEventType.TASK_STARTED,
+                candidate.attemptNumber() == 1
+                        ? ExecutionEventType.TASK_STARTED
+                        : ExecutionEventType.TASK_RETRY_STARTED,
                 current.status().name(),
                 running.status().name(),
                 now
@@ -317,9 +592,12 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 candidate.taskType(),
                 candidate.configuration(),
                 running.stateVersion(),
-                candidate.attemptNumber()
+                candidate.attemptNumber(),
+                fencingToken,
+                candidate.attemptTimeoutMs()
         );
         if (enqueueCommand) insertTaskCommand(workItem, now);
+        if (candidate.attemptNumber() > 1) retryObserver.started();
         return workItem;
     }
 
@@ -374,10 +652,10 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     private void cancelQueuedTasks(UUID executionId, Instant now) {
         List<TaskRun> queued = jdbc.sql("""
                 SELECT id, workflow_execution_id, task_key, status, state_version,
-                       created_at, started_at, finished_at
+                       created_at, started_at, finished_at, next_attempt_at
                   FROM task_execution
                  WHERE workflow_execution_id = :executionId
-                   AND status IN ('BLOCKED', 'READY')
+                   AND status IN ('BLOCKED', 'READY', 'RETRY_SCHEDULED')
                  ORDER BY task_key
                  FOR UPDATE
                 """)
@@ -413,6 +691,45 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         }
     }
 
+    private RetryContext loadRetryContext(UUID taskId) {
+        return jdbc.sql("""
+                SELECT ta.attempt_number, ta.fencing_token,
+                       wt.max_attempts, wt.initial_backoff_ms, wt.backoff_multiplier,
+                       wt.max_backoff_ms, wt.jitter_factor, wt.attempt_timeout_ms,
+                       wt.retryable_error_codes
+                  FROM task_execution te
+                  JOIN workflow_execution we ON we.id = te.workflow_execution_id
+                  JOIN workflow_task wt
+                    ON wt.workflow_version_id = we.workflow_version_id
+                   AND wt.task_key = te.task_key
+                  JOIN task_attempt ta
+                    ON ta.task_execution_id = te.id
+                   AND ta.status = 'RUNNING'
+                 WHERE te.id = :taskId
+                 FOR UPDATE OF ta
+                """)
+                .param("taskId", taskId)
+                .query((rs, rowNum) -> new RetryContext(
+                        rs.getInt("attempt_number"),
+                        rs.getObject("fencing_token", UUID.class),
+                        new TaskReliabilityPolicy(
+                                rs.getInt("max_attempts"),
+                                Duration.ofMillis(rs.getLong("initial_backoff_ms")),
+                                rs.getDouble("backoff_multiplier"),
+                                Duration.ofMillis(rs.getLong("max_backoff_ms")),
+                                rs.getDouble("jitter_factor"),
+                                rs.getObject("attempt_timeout_ms") == null
+                                        ? null
+                                        : Duration.ofMillis(rs.getLong("attempt_timeout_ms")),
+                                stringSetFromJson(rs.getString("retryable_error_codes"))
+                        )
+                ))
+                .optional()
+                .orElseThrow(() -> new ExecutionConflictException(
+                        "No running attempt exists for task " + taskId
+                ));
+    }
+
     private void updateWorkflow(WorkflowRun current, WorkflowRun next) {
         int changed = jdbc.sql("""
                 UPDATE workflow_execution
@@ -439,7 +756,8 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                    SET status = :status,
                        state_version = :nextVersion,
                        started_at = :startedAt,
-                       finished_at = :finishedAt
+                       finished_at = :finishedAt,
+                       next_attempt_at = :nextAttemptAt
                  WHERE id = :id
                    AND state_version = :currentVersion
                 """)
@@ -447,6 +765,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 .param("nextVersion", next.stateVersion())
                 .param("startedAt", timestamp(next.startedAt()))
                 .param("finishedAt", timestamp(next.finishedAt()))
+                .param("nextAttemptAt", timestamp(next.nextAttemptAt()))
                 .param("id", next.id())
                 .param("currentVersion", current.stateVersion())
                 .update();
@@ -487,7 +806,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     private TaskRun lockTask(UUID taskRunId) {
         return jdbc.sql("""
                 SELECT id, workflow_execution_id, task_key, status, state_version,
-                       created_at, started_at, finished_at
+                       created_at, started_at, finished_at, next_attempt_at
                   FROM task_execution
                  WHERE id = :id
                  FOR UPDATE
@@ -554,7 +873,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     private List<TaskRun> loadTasks(UUID executionId) {
         return jdbc.sql("""
                 SELECT te.id, te.workflow_execution_id, te.task_key, te.status, te.state_version,
-                       te.created_at, te.started_at, te.finished_at
+                       te.created_at, te.started_at, te.finished_at, te.next_attempt_at
                   FROM task_execution te
                   JOIN workflow_execution we ON we.id = te.workflow_execution_id
                   JOIN workflow_task wt
@@ -734,7 +1053,9 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                         workItem.taskType(),
                         workItem.configuration(),
                         workItem.stateVersion(),
-                        workItem.attemptNumber()
+                        workItem.attemptNumber(),
+                        workItem.fencingToken(),
+                        workItem.attemptTimeoutMs()
                 )
         );
         insertOutbox(
@@ -813,7 +1134,8 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 rs.getLong("state_version"),
                 instant(rs.getObject("created_at")),
                 instant(rs.getObject("started_at")),
-                instant(rs.getObject("finished_at"))
+                instant(rs.getObject("finished_at")),
+                instant(rs.getObject("next_attempt_at"))
         );
     }
 
@@ -824,6 +1146,15 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             return configuration;
         } catch (JacksonException exception) {
             throw new IllegalStateException("Stored task configuration is invalid", exception);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<String> stringSetFromJson(String value) {
+        try {
+            return Set.copyOf((Set<String>) objectMapper.readValue(value, Set.class));
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Stored retryable error codes are invalid", exception);
         }
     }
 
@@ -879,7 +1210,14 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             TaskRun task,
             String taskType,
             Map<String, Object> configuration,
-            int attemptNumber
+            int attemptNumber,
+            Long attemptTimeoutMs
     ) {
+    }
+
+    private record RetryContext(int attemptNumber, UUID fencingToken, TaskReliabilityPolicy policy) {
+    }
+
+    private record LeaseCandidate(UUID taskId, UUID fencingToken) {
     }
 }

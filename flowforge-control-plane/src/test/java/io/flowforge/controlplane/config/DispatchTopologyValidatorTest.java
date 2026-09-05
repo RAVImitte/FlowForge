@@ -59,6 +59,7 @@ class DispatchTopologyValidatorTest {
                 commandDispatchEnabled,
                 outboxPublisherEnabled,
                 resultConsumerEnabled,
+                resultConsumerEnabled,
                 activeDispatcherRequired
         ).afterPropertiesSet();
     }

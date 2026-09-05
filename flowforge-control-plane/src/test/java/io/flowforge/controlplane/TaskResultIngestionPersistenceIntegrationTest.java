@@ -48,7 +48,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "flowforge.execution.dispatch-enabled=false",
         "flowforge.outbox.publisher-enabled=false",
         "flowforge.outbox.command-dispatch-enabled=false",
-        "flowforge.results.consumer-enabled=false"
+        "flowforge.results.consumer-enabled=false",
+        "flowforge.retries.scheduler-enabled=false",
+        "flowforge.timeouts.reaper-enabled=false"
 })
 @Testcontainers(disabledWithoutDocker = true)
 class TaskResultIngestionPersistenceIntegrationTest {
@@ -146,7 +148,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 1,
                 TaskOutcome.SUCCEEDED,
                 null,
-                null
+                null,
+                null,
+                fencingToken(root.id(), 1)
         );
         String staleJson = envelopeJson(stale);
 
@@ -169,7 +173,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 accepted.result().attemptNumber(),
                 TaskOutcome.FAILED,
                 "CONFLICT",
-                "different result"
+                "different result",
+                null,
+                accepted.result().fencingToken()
         );
         assertThatThrownBy(() -> ingestion.ingest(
                 reusedId, envelopeJson(reusedId), TIME.plusSeconds(4)
@@ -278,7 +284,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 1,
                 outcome,
                 outcome == TaskOutcome.FAILED ? "TEST_FAILURE" : null,
-                outcome == TaskOutcome.FAILED ? "Expected failure" : null
+                outcome == TaskOutcome.FAILED ? "Expected failure" : null,
+                null,
+                fencingToken(task.id(), 1)
         );
         return new ResultMessage(result, envelopeJson(result));
     }
@@ -292,7 +300,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 result.attemptNumber(),
                 TaskResultOutcomeV1.valueOf(result.outcome().name()),
                 result.errorCode(),
-                result.errorMessage()
+                result.errorMessage(),
+                result.fencingToken(),
+                result.retryable()
         );
         return objectMapper.writeValueAsString(new MessageEnvelope<>(
                 result.eventId(),
@@ -306,6 +316,17 @@ class TaskResultIngestionPersistenceIntegrationTest {
 
     private WorkflowExecution current(UUID workflowExecutionId) {
         return executions.findById(workflowExecutionId).orElseThrow();
+    }
+
+    private UUID fencingToken(UUID taskId, int attemptNumber) {
+        return jdbc.sql("""
+                SELECT fencing_token FROM task_attempt
+                 WHERE task_execution_id = :taskId AND attempt_number = :attemptNumber
+                """)
+                .param("taskId", taskId)
+                .param("attemptNumber", attemptNumber)
+                .query(UUID.class)
+                .single();
     }
 
     private static TaskRun task(WorkflowExecution execution, String key) {

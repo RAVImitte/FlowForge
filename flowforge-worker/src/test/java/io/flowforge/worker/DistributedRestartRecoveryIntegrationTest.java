@@ -144,6 +144,7 @@ class DistributedRestartRecoveryIntegrationTest {
                         "--flowforge.outbox.publisher-enabled=true",
                         "--flowforge.outbox.command-dispatch-enabled=true",
                         "--flowforge.results.consumer-enabled=true",
+                        "--flowforge.leases.heartbeat-consumer-enabled=true",
                         "--flowforge.outbox.instance-id=" + instanceId,
                         "--flowforge.results.consumer-group=" + RESULT_GROUP,
                         "--flowforge.outbox.poll-interval-ms=50",

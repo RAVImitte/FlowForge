@@ -17,6 +17,7 @@
     <modules>
         <module>flowforge-domain</module>
         <module>flowforge-messaging</module>
+        <module>flowforge-kafka-support</module>
         <module>flowforge-application</module>
         <module>flowforge-control-plane</module>
         <module>flowforge-worker</module>
