@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable one-time and cron schedule definitions are complete, while horizontally safe due-fire materialization is the next slice.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable schedules and horizontally safe due-fire recovery are complete, while Redis-assisted coordination is the next slice.
 
 ## Current capabilities
 
@@ -51,8 +51,13 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Persist schedule definitions and trigger-history foundations in PostgreSQL
 - Create, inspect, list, update, pause, resume, and soft-delete schedules through versioned HTTP APIs
 - Fence concurrent schedule mutations with strong ETags and `If-Match`
+- Materialize due fires in bounded, disjoint PostgreSQL batches across scheduler replicas
+- Start scheduled workflows with deterministic logical-fire idempotency keys
+- Recover abandoned trigger processing through token-fenced leases and delayed retries
+- Catch up once or skip stale occurrences according to an explicit misfire policy and threshold
+- Complete one-time schedules and durably advance recurring schedules to their next future occurrence
 
-Phase 4 is complete. Phase 5 Slice 5.1 is verified with durable schedule definitions; Slice 5.2 will materialize due fires and recover misfires across competing scheduler replicas. Redis coordination follows in Slice 5.3.
+Phase 4 is complete. Phase 5 Slices 5.1 and 5.2 are verified with durable definitions, trigger history, multi-replica claims, idempotent execution start, and crash recovery. Redis coordination follows in Slice 5.3.
 
 ## Prerequisites
 
@@ -134,6 +139,14 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_LEASE_REAPER_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_LEASE_REAPER_BATCH_SIZE` | `100` |
 | `FLOWFORGE_LEASE_REAPER_POLL_INTERVAL_MS` | `250` |
+| `FLOWFORGE_SCHEDULING_ENABLED` | `false`; production profile: `true` |
+| `FLOWFORGE_SCHEDULING_MATERIALIZATION_BATCH_SIZE` | `100` |
+| `FLOWFORGE_SCHEDULING_PROCESSING_BATCH_SIZE` | `100` |
+| `FLOWFORGE_SCHEDULING_POLL_INTERVAL_MS` | `1000` |
+| `FLOWFORGE_SCHEDULING_LEASE_DURATION` | `30s` |
+| `FLOWFORGE_SCHEDULING_RETRY_DELAY` | `5s` |
+| `FLOWFORGE_SCHEDULING_MISFIRE_THRESHOLD` | `1m` |
+| `FLOWFORGE_SCHEDULER_INSTANCE_ID` | Generated per process |
 | `FLOWFORGE_INSTANCE_ID` | Generated per process |
 | `FLOWFORGE_WORKER_ID` | Generated per process |
 | `FLOWFORGE_WORKER_GROUP` | `flowforge-workers-v1` |
@@ -162,6 +175,8 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 - Known publish failures are released for retry. Unknown acknowledgement outcomes wait for the fenced claim lease to expire and may then produce a duplicate with the same event ID.
 - Poison records are retried in place, then copied to a topic-specific V1 DLQ with source topic/partition/offset, raw key/value, failure metadata, and original correlation headers. A crash after DLQ acknowledgement but before source-offset commit may duplicate the deterministic source-record ID.
 - `flowforge.kafka.dlq.record.age` exposes the recovery-age distribution and maximum observed age; publication, delivery-failure, recovery-failure, and recovered-record counters are tagged by bounded source-topic names.
+- Scheduler replicas claim disjoint due definitions and pending triggers through PostgreSQL row locks. Trigger leases are token-fenced, and replay uses the same deterministic idempotency key, so a crash cannot create a second logical workflow execution.
+- A stale recurring schedule creates at most one catch-up execution per poll. `SKIP` records the missed occurrence without execution; both policies advance directly to the first future cron occurrence to prevent catch-up storms.
 
 ## API
 

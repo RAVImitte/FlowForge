@@ -226,9 +226,9 @@ Phase 4 exit criteria are satisfied. Durable schedules, Redis coordination, rate
 
 Status: **IN PROGRESS**
 
-Completed milestone: **Slice 5.1 - Durable schedule-definition foundation**
+Completed milestones: **Slices 5.1-5.2 - Durable schedule definitions through due-fire recovery**
 
-Next milestone: **Slice 5.2 - Due-fire materialization and misfire recovery**
+Next milestone: **Slice 5.3 - Redis coordination foundation**
 
 Detailed implementation plan: [Phase 5 plan](PHASE_5_PLAN.md)
 
@@ -240,13 +240,21 @@ Completed capabilities:
 - Create, inspect, list, update, pause, resume, and soft-delete schedule APIs
 - Active-workflow and published-version validation
 - Strong ETag and `If-Match` optimistic concurrency for schedule mutations
+- Durable schedule-trigger history with deterministic logical-fire idempotency keys
+- Bounded, multi-replica-safe due-schedule materialization using `FOR UPDATE SKIP LOCKED`
+- Token-fenced trigger processing leases with expiry recovery and delayed transient retries
+- Exactly-once workflow creation at the durable state boundary despite at-least-once trigger processing
+- Catch-up-once and skip misfire policies with a configurable lateness threshold
+- Automatic one-time schedule completion and recurring next-fire advancement
+- Scheduler lifecycle and failure metrics
 - Domain, cron-calculation, HTTP, and PostgreSQL persistence tests
 
 Verification notes:
 
-- The complete Maven reactor succeeds across 48 suites with 137 tests passing and no failures, errors, or skipped tests.
+- The complete Maven reactor succeeds across 50 suites with 146 tests passing and no failures, errors, or skipped tests.
 - Rancher Desktop-backed PostgreSQL tests verify schedule round trips, lifecycle mutations, unpublished-workflow rejection, and stale-version fencing.
-- Schedule definitions are durable, but due-fire execution is deliberately deferred to Slice 5.2.
+- Rancher Desktop-backed PostgreSQL tests verify disjoint competing-scheduler batches, deterministic execution identity, expired-lease takeover, and stale-token fencing.
+- Redis remains outside the correctness boundary and is deliberately deferred to Slice 5.3.
 
 Planned scope:
 

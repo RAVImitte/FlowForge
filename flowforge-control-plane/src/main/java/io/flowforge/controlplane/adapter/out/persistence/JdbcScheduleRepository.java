@@ -85,7 +85,7 @@ public class JdbcScheduleRepository implements ScheduleRepository {
             Instant nextFireAt,
             Instant now
     ) {
-        lockAndCheck(id, expectedLockVersion);
+        ensureMutable(id, lockAndCheck(id, expectedLockVersion));
         ScheduleColumns columns = columns(draft.spec());
         jdbc.sql("""
                 UPDATE workflow_schedule
@@ -122,10 +122,10 @@ public class JdbcScheduleRepository implements ScheduleRepository {
             Instant nextFireAt,
             Instant now
     ) {
-        if (status == ScheduleStatus.DELETED) {
-            throw new IllegalArgumentException("Use delete for the DELETED status");
+        if (status != ScheduleStatus.ACTIVE && status != ScheduleStatus.PAUSED) {
+            throw new IllegalArgumentException("Only ACTIVE and PAUSED are mutable statuses");
         }
-        lockAndCheck(id, expectedLockVersion);
+        ensureMutable(id, lockAndCheck(id, expectedLockVersion));
         jdbc.sql("""
                 UPDATE workflow_schedule
                    SET status = :status,
@@ -178,7 +178,7 @@ public class JdbcScheduleRepository implements ScheduleRepository {
                 .update();
     }
 
-    private void lockAndCheck(UUID id, long expectedLockVersion) {
+    private ScheduleStatus lockAndCheck(UUID id, long expectedLockVersion) {
         Optional<Map<String, Object>> row = jdbc.sql("""
                 SELECT lock_version, status FROM workflow_schedule WHERE id = :id FOR UPDATE
                 """).param("id", id).query((rs, rowNum) -> Map.<String, Object>of(
@@ -194,6 +194,13 @@ public class JdbcScheduleRepository implements ScheduleRepository {
                     "Schedule was modified concurrently; expected version "
                             + expectedLockVersion + " but found " + actual
             );
+        }
+        return ScheduleStatus.valueOf((String) row.get().get("status"));
+    }
+
+    private static void ensureMutable(UUID id, ScheduleStatus status) {
+        if (status == ScheduleStatus.COMPLETED) {
+            throw new ScheduleConflictException("Completed schedule " + id + " cannot be modified");
         }
     }
 
@@ -231,6 +238,7 @@ public class JdbcScheduleRepository implements ScheduleRepository {
     }
 
     private static Instant instant(Object value) {
+        if (value == null) return null;
         if (value instanceof OffsetDateTime timestamp) return timestamp.toInstant();
         if (value instanceof Timestamp timestamp) return timestamp.toInstant();
         throw new IllegalStateException("Unsupported timestamp value: " + value);

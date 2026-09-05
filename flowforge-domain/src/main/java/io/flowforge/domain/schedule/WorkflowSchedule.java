@@ -21,7 +21,12 @@ public record WorkflowSchedule(
         Objects.requireNonNull(spec, "spec must not be null");
         Objects.requireNonNull(misfirePolicy, "misfirePolicy must not be null");
         Objects.requireNonNull(status, "status must not be null");
-        Objects.requireNonNull(nextFireAt, "nextFireAt must not be null");
+        if (status == ScheduleStatus.COMPLETED && nextFireAt != null) {
+            throw new IllegalArgumentException("A completed schedule must not have a next fire time");
+        }
+        if (status != ScheduleStatus.COMPLETED && nextFireAt == null) {
+            throw new IllegalArgumentException("A non-completed schedule must have a next fire time");
+        }
         Objects.requireNonNull(createdAt, "createdAt must not be null");
         Objects.requireNonNull(updatedAt, "updatedAt must not be null");
         if (lockVersion < 0) throw new IllegalArgumentException("lockVersion must not be negative");

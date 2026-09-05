@@ -44,7 +44,7 @@ Implemented checkpoint:
 
 ### Slice 5.2: Due-fire materialization and misfire recovery
 
-Status: **NEXT**
+Status: **COMPLETED**
 
 - Compute and persist next fire times for one-time and recurring schedules.
 - Claim due schedules with bounded `FOR UPDATE SKIP LOCKED` batches and fenced leases.
@@ -54,9 +54,21 @@ Status: **NEXT**
 
 Exit: scheduler replicas materialize each logical fire once at the workflow-state boundary and recover safely after downtime.
 
+Implemented checkpoint:
+
+- Added a production-only scheduler loop with bounded materialization and processing batches.
+- Materialized due schedules with PostgreSQL `FOR UPDATE SKIP LOCKED` claims and deterministic schedule/fire idempotency keys.
+- Separated durable trigger creation from workflow start so an interrupted processor can safely replay the same execution request.
+- Added token-fenced trigger leases, expired-claim recovery, retry delay, and terminal failure recording.
+- Completed one-time schedules after their only occurrence and advanced recurring schedules to their first future occurrence.
+- Implemented configurable misfire threshold behavior: `FIRE_ONCE` catches up once and `SKIP` records a skipped trigger without creating an execution.
+- Added scheduler metrics for materialization, skipped misfires, claims, starts, failures, releases, stale acknowledgements, and loop failures.
+- Verified DST-gap calculation, deterministic fire identity, transient/permanent failure handling, competing schedulers, lease recovery, and stale-token rejection.
+- Verified the complete Maven reactor: 146 tests across 50 suites, with no failures, errors, or skipped tests.
+
 ### Slice 5.3: Redis coordination foundation
 
-Status: **PLANNED**
+Status: **NEXT**
 
 - Add Redis to the local environment and health/metrics configuration.
 - Implement token-owned leased permits and atomic Lua acquire/renew/release operations.

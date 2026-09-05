@@ -4,6 +4,8 @@ import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
 import io.flowforge.application.schedule.ScheduleCalculator;
+import io.flowforge.application.schedule.ScheduleFireRepository;
+import io.flowforge.application.schedule.ScheduleFireService;
 import io.flowforge.application.schedule.ScheduleRepository;
 import io.flowforge.application.schedule.WorkflowScheduleService;
 import io.flowforge.application.workflow.WorkflowRepository;
@@ -12,9 +14,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 
@@ -36,6 +40,27 @@ public class ApplicationConfiguration {
             Clock clock
     ) {
         return new WorkflowScheduleService(schedules, workflows, calculator, clock);
+    }
+
+    @Bean
+    ScheduleFireService scheduleFireService(
+            ScheduleFireRepository fires,
+            WorkflowExecutionService executions,
+            Clock clock,
+            @Value("${flowforge.scheduling.instance-id:${spring.application.name}-${random.uuid}}") String instanceId,
+            @Value("${flowforge.scheduling.lease-duration:30s}") Duration leaseDuration,
+            @Value("${flowforge.scheduling.retry-delay:5s}") Duration retryDelay,
+            @Value("${flowforge.scheduling.misfire-threshold:1m}") Duration misfireThreshold
+    ) {
+        return new ScheduleFireService(
+                fires,
+                executions,
+                clock,
+                instanceId,
+                leaseDuration,
+                retryDelay,
+                misfireThreshold
+        );
     }
 
     @Bean

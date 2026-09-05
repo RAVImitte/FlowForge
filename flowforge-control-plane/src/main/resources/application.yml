@@ -51,7 +51,7 @@ management:
 info:
   app:
     name: FlowForge
-    phase: 4
+    phase: 5
 
 flowforge:
   kafka:
@@ -97,3 +97,12 @@ flowforge:
     reaper-enabled: ${FLOWFORGE_LEASE_REAPER_ENABLED:false}
     batch-size: ${FLOWFORGE_LEASE_REAPER_BATCH_SIZE:100}
     poll-interval-ms: ${FLOWFORGE_LEASE_REAPER_POLL_INTERVAL_MS:250}
+  scheduling:
+    enabled: ${FLOWFORGE_SCHEDULING_ENABLED:false}
+    materialization-batch-size: ${FLOWFORGE_SCHEDULING_MATERIALIZATION_BATCH_SIZE:100}
+    processing-batch-size: ${FLOWFORGE_SCHEDULING_PROCESSING_BATCH_SIZE:100}
+    poll-interval-ms: ${FLOWFORGE_SCHEDULING_POLL_INTERVAL_MS:1000}
+    lease-duration: ${FLOWFORGE_SCHEDULING_LEASE_DURATION:30s}
+    retry-delay: ${FLOWFORGE_SCHEDULING_RETRY_DELAY:5s}
+    misfire-threshold: ${FLOWFORGE_SCHEDULING_MISFIRE_THRESHOLD:1m}
+    instance-id: ${FLOWFORGE_SCHEDULER_INSTANCE_ID:${spring.application.name}-${random.uuid}}

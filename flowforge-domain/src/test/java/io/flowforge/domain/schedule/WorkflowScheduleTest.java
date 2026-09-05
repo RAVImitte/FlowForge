@@ -38,4 +38,34 @@ class WorkflowScheduleTest {
                 now.minusSeconds(1)
         )).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void completedSchedulesHaveNoNextFireTime() {
+        Instant now = Instant.parse("2026-09-05T12:00:00Z");
+        WorkflowSchedule completed = new WorkflowSchedule(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                new OneTimeSchedule(now),
+                MisfirePolicy.FIRE_ONCE,
+                ScheduleStatus.COMPLETED,
+                null,
+                1,
+                now.minusSeconds(1),
+                now
+        );
+
+        assertThat(completed.nextFireAt()).isNull();
+        assertThatThrownBy(() -> new WorkflowSchedule(
+                completed.id(),
+                completed.workflowId(),
+                completed.spec(),
+                completed.misfirePolicy(),
+                ScheduleStatus.COMPLETED,
+                now.plusSeconds(1),
+                completed.lockVersion(),
+                completed.createdAt(),
+                completed.updatedAt()
+        )).isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("completed schedule");
+    }
 }

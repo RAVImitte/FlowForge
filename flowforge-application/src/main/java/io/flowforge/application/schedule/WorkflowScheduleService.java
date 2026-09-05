@@ -48,6 +48,7 @@ public final class WorkflowScheduleService {
     }
 
     public WorkflowSchedule update(UUID id, long expectedLockVersion, WorkflowScheduleDraft draft) {
+        ensureMutable(get(id));
         validateWorkflow(draft.workflowId());
         Instant now = clock.instant();
         return schedules.update(
@@ -61,6 +62,7 @@ public final class WorkflowScheduleService {
 
     public WorkflowSchedule pause(UUID id, long expectedLockVersion) {
         WorkflowSchedule current = get(id);
+        ensureMutable(current);
         return schedules.changeStatus(
                 id, expectedLockVersion, ScheduleStatus.PAUSED, current.nextFireAt(), clock.instant()
         );
@@ -68,6 +70,7 @@ public final class WorkflowScheduleService {
 
     public WorkflowSchedule resume(UUID id, long expectedLockVersion) {
         WorkflowSchedule current = get(id);
+        ensureMutable(current);
         Instant now = clock.instant();
         return schedules.changeStatus(
                 id,
@@ -85,5 +88,13 @@ public final class WorkflowScheduleService {
     private void validateWorkflow(UUID workflowId) {
         if (workflows.findById(workflowId).isEmpty()) throw new WorkflowNotFoundException(workflowId);
         if (!workflows.hasPublishedVersion(workflowId)) throw new WorkflowNotPublishedException(workflowId);
+    }
+
+    private static void ensureMutable(WorkflowSchedule schedule) {
+        if (schedule.status() == ScheduleStatus.COMPLETED) {
+            throw new ScheduleConflictException(
+                    "Completed schedule " + schedule.id() + " cannot be modified"
+            );
+        }
     }
 }

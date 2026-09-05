@@ -35,4 +35,12 @@ class SpringScheduleCalculatorTest {
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid cronExpression");
     }
+
+    @Test
+    void handlesDaylightSavingGapsDeterministically() {
+        assertThat(calculator.nextFireAt(
+                new CronSchedule("0 30 2 * * *", ZoneId.of("America/New_York")),
+                Instant.parse("2026-03-08T06:59:00Z")
+        )).isEqualTo(Instant.parse("2026-03-09T06:30:00Z"));
+    }
 }

@@ -12,3 +12,5 @@ flowforge:
   leases:
     heartbeat-consumer-enabled: true
     reaper-enabled: true
+  scheduling:
+    enabled: true
