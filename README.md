@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is complete: durable scheduling, Redis-assisted coordination, concurrency enforcement, rate limiting, admission backpressure, and restart resilience are verified across the distributed execution path.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phases 1-5 establish durable distributed execution and scheduling; Phase 6 is adding correlation-aware observability and measured horizontal-scalability evidence.
 
 ## Current capabilities
 
@@ -75,8 +75,11 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Rebalance Kafka consumers cooperatively while allowing bounded in-flight handlers to finish during graceful shutdown
 - Recover an abandoned schedule through control-plane and worker replacement while reconstructing active permit mirrors after total Redis key loss
 - Operate scheduling and coordination through a dedicated runbook and an accepted architecture decision record
+- Scope consistent workflow, task, attempt, event, fencing, and Kafka metadata into leak-safe structured log context
+- Accept safe `X-Correlation-Id` request identifiers, generate replacements for unsafe values, and echo the effective ID
+- Emit ECS JSON console logs in production profiles while retaining readable local and test output
 
-Phases 1-5 are complete. Phase 6 adds distributed tracing, dashboards, alerting, and measured horizontal-capacity validation.
+Phases 1-5 and Phase 6 Slice 6.1 are complete. Slice 6.2 adds OpenTelemetry tracing and W3C propagation.
 
 ## Prerequisites
 
@@ -106,6 +109,7 @@ The `production` profile enables Kafka, outbox publication, command dispatch, an
 Run a worker in a second terminal (it uses the same local PostgreSQL service by default, with an independent Flyway history table):
 
 ```powershell
+$env:SPRING_PROFILES_ACTIVE = 'production'
 .\mvnw.cmd -pl flowforge-worker -am spring-boot:run
 ```
 
@@ -128,6 +132,7 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 | `FLOWFORGE_DB_PASSWORD` | `flowforge` |
 | `FLOWFORGE_DB_POOL_SIZE` | `10` |
 | `FLOWFORGE_SHUTDOWN_TIMEOUT` | Control plane: `30s`; worker: `70s` |
+| `FLOWFORGE_LOG_FORMAT` | Production profiles: `ecs` |
 | `FLOWFORGE_REDIS_HOST` | `localhost` |
 | `FLOWFORGE_REDIS_PORT` | `6379` |
 | `FLOWFORGE_REDIS_PASSWORD` | Empty |

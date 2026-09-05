@@ -6,8 +6,12 @@ import io.flowforge.application.execution.TaskHeartbeatIngestionOutcome;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskHeartbeatV1;
+import io.flowforge.observability.LogContext;
+import io.flowforge.observability.LogFields;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -22,6 +26,7 @@ import java.time.Clock;
 @ConditionalOnProperty(prefix = "flowforge.kafka", name = "enabled", havingValue = "true")
 @ConditionalOnProperty(prefix = "flowforge.leases", name = "heartbeat-consumer-enabled", havingValue = "true")
 public class TaskHeartbeatConsumer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TaskHeartbeatConsumer.class);
     private static final TypeReference<MessageEnvelope<TaskHeartbeatV1>> HEARTBEAT_TYPE = new TypeReference<>() {
     };
 
@@ -47,29 +52,61 @@ public class TaskHeartbeatConsumer {
             groupId = "${flowforge.leases.heartbeat-consumer-group:flowforge-control-plane-heartbeats-v1}"
     )
     public void consume(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
-        try {
-            MessageEnvelope<TaskHeartbeatV1> envelope = decode(record.value());
-            validate(record, envelope);
+        try (LogContext recordContext = recordContext(record)) {
+            MessageEnvelope<TaskHeartbeatV1> envelope;
+            try {
+                envelope = decode(record.value());
+                validate(record, envelope);
+            } catch (RuntimeException failure) {
+                recordFailure(failure);
+                throw failure;
+            }
             TaskHeartbeatV1 payload = envelope.payload();
-            TaskHeartbeatIngestionOutcome outcome = ingestion.ingest(
-                    new InboundTaskHeartbeat(
-                            envelope.eventId(),
-                            payload.workflowExecutionId(),
-                            payload.taskExecutionId(),
-                            payload.taskKey(),
-                            payload.attemptNumber(),
-                            payload.fencingToken(),
-                            payload.workerId()
-                    ),
-                    record.value(),
-                    clock.instant()
-            );
-            meters.counter("flowforge.leases.heartbeats", "outcome", outcome.name()).increment();
-            acknowledgment.acknowledge();
-        } catch (RuntimeException failure) {
-            meters.counter("flowforge.leases.heartbeat.failures").increment();
-            throw failure;
+            try (LogContext messageContext = LogContext.open(
+                    LogFields.CORRELATION_ID, envelope.correlationId(),
+                    LogFields.EVENT_ID, envelope.eventId(),
+                    LogFields.WORKFLOW_EXECUTION_ID, payload.workflowExecutionId(),
+                    LogFields.TASK_EXECUTION_ID, payload.taskExecutionId(),
+                    LogFields.TASK_KEY, payload.taskKey(),
+                    LogFields.ATTEMPT_NUMBER, payload.attemptNumber(),
+                    LogFields.FENCING_TOKEN, payload.fencingToken(),
+                    LogFields.WORKER_ID, payload.workerId()
+            )) {
+                try {
+                    TaskHeartbeatIngestionOutcome outcome = ingestion.ingest(
+                            new InboundTaskHeartbeat(
+                                    envelope.eventId(),
+                                    payload.workflowExecutionId(),
+                                    payload.taskExecutionId(),
+                                    payload.taskKey(),
+                                    payload.attemptNumber(),
+                                    payload.fencingToken(),
+                                    payload.workerId()
+                            ),
+                            record.value(),
+                            clock.instant()
+                    );
+                    meters.counter("flowforge.leases.heartbeats", "outcome", outcome.name()).increment();
+                    acknowledgment.acknowledge();
+                } catch (RuntimeException failure) {
+                    recordFailure(failure);
+                    throw failure;
+                }
+            }
         }
+    }
+
+    private LogContext recordContext(ConsumerRecord<String, String> record) {
+        return LogContext.open(
+                LogFields.KAFKA_TOPIC, record.topic(),
+                LogFields.KAFKA_PARTITION, record.partition(),
+                LogFields.KAFKA_OFFSET, record.offset()
+        );
+    }
+
+    private void recordFailure(RuntimeException failure) {
+        meters.counter("flowforge.leases.heartbeat.failures").increment();
+        LOGGER.warn("Task heartbeat consumption failed", failure);
     }
 
     private MessageEnvelope<TaskHeartbeatV1> decode(String payload) {

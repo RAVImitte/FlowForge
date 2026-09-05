@@ -9,17 +9,21 @@ import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskResultOutcomeV1;
 import io.flowforge.messaging.TaskResultV1;
+import io.flowforge.observability.LogFields;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.MDC;
 import org.springframework.kafka.support.Acknowledgment;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -41,7 +45,11 @@ class TaskResultConsumerTest {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         MessageEnvelope<TaskResultV1> envelope = resultEnvelope();
         String json = JSON.writeValueAsString(envelope);
-        when(ingestion.ingest(any(), eq(json), eq(NOW))).thenReturn(TaskResultIngestionOutcome.APPLIED);
+        AtomicReference<Map<String, String>> logContext = new AtomicReference<>();
+        when(ingestion.ingest(any(), eq(json), eq(NOW))).thenAnswer(invocation -> {
+            logContext.set(MDC.getCopyOfContextMap());
+            return TaskResultIngestionOutcome.APPLIED;
+        });
 
         consumer(ingestion, meters).consume(record(envelope.correlationId().toString(), json), acknowledgment);
 
@@ -52,6 +60,16 @@ class TaskResultConsumerTest {
         assertThat(result.getValue().outcome()).isEqualTo(TaskOutcome.SUCCEEDED);
         assertThat(result.getValue().fencingToken()).isEqualTo(envelope.payload().fencingToken());
         assertThat(meters.counter("flowforge.results.consumed", "outcome", "APPLIED").count()).isEqualTo(1);
+        assertThat(logContext.get())
+                .containsEntry(LogFields.CORRELATION_ID, envelope.correlationId().toString())
+                .containsEntry(LogFields.EVENT_ID, envelope.eventId().toString())
+                .containsEntry(LogFields.WORKFLOW_EXECUTION_ID, envelope.payload().workflowExecutionId().toString())
+                .containsEntry(LogFields.TASK_EXECUTION_ID, envelope.payload().taskExecutionId().toString())
+                .containsEntry(LogFields.ATTEMPT_NUMBER, "1")
+                .containsEntry(LogFields.KAFKA_TOPIC, FlowForgeTopics.TASK_RESULTS_V1)
+                .containsEntry(LogFields.KAFKA_PARTITION, "0")
+                .containsEntry(LogFields.KAFKA_OFFSET, "1");
+        assertThat(MDC.getCopyOfContextMap()).isNull();
     }
 
     @Test

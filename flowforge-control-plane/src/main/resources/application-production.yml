@@ -18,3 +18,8 @@ flowforge:
     enabled: true
   concurrency:
     reconciliation-enabled: true
+
+logging:
+  structured:
+    format:
+      console: ${FLOWFORGE_LOG_FORMAT:ecs}

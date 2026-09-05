@@ -1,5 +1,7 @@
 package io.flowforge.worker.messaging;
 
+import io.flowforge.observability.LogContext;
+import io.flowforge.observability.LogFields;
 import io.flowforge.worker.config.WorkerExecutionProperties;
 import io.flowforge.worker.config.WorkerProperties;
 import io.flowforge.worker.persistence.WorkerResultMessage;
@@ -91,6 +93,18 @@ public class WorkerResultPublisher implements ApplicationRunner {
     }
 
     private boolean publish(WorkerResultMessage message) {
+        try (LogContext ignored = LogContext.open(
+                LogFields.CORRELATION_ID, message.workflowExecutionId(),
+                LogFields.EVENT_ID, message.id(),
+                LogFields.WORKFLOW_EXECUTION_ID, message.workflowExecutionId(),
+                LogFields.WORKER_ID, worker.id(),
+                LogFields.KAFKA_TOPIC, message.topic()
+        )) {
+            return publishWithContext(message);
+        }
+    }
+
+    private boolean publishWithContext(WorkerResultMessage message) {
         try {
             ProducerRecord<String, String> record = new ProducerRecord<>(
                     message.topic(), message.recordKey(), message.payload()

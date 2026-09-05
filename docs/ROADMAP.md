@@ -17,7 +17,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 | Phase 3 | COMPLETED | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | COMPLETED | Retries, timeouts, dead-letter queues, and failure recovery |
 | Phase 5 | COMPLETED | Durable scheduling, Redis coordination, and backpressure |
-| Phase 6 | PLANNED | Observability, scalability validation, and resilience testing |
+| Phase 6 | IN PROGRESS | Observability, scalability validation, and resilience testing |
 | Phase 7 | PLANNED | Security, delivery automation, and operational readiness |
 
 ## Phase 1: Foundation and workflow definitions
@@ -292,11 +292,31 @@ Planned scope:
 
 ## Phase 6: Observability and horizontal scalability
 
-Status: **PLANNED**
+Status: **IN PROGRESS**
 
-Planned scope:
+Completed milestones: **Slice 6.1 - Correlation-aware structured logging**
 
-- Structured logs with workflow, task, attempt, and correlation identifiers
+Next milestone: **Slice 6.2 - OpenTelemetry tracing and propagation**
+
+Detailed implementation plan: [Phase 6 plan](PHASE_6_PLAN.md)
+
+Completed capabilities:
+
+- Shared observability module with canonical structured-log fields and leak-safe nested MDC scopes
+- Bounded caller-supplied HTTP correlation IDs with generated safe fallbacks and response echoing
+- Workflow, task, attempt, event, fencing, worker, topic, partition, and offset context across Kafka consumers
+- Durable outbox and asynchronous heartbeat publication context across control-plane and worker threads
+- Production-only ECS JSON console output through Spring Boot native structured logging
+- Context restoration, injection resistance, consumer correlation, and production-profile tests
+
+Verification notes:
+
+- The complete Maven reactor succeeds across 59 suites with 182 tests passing and no failures, errors, or skipped tests.
+- Request and consumer tests verify unsafe correlation values are replaced and MDC state is cleared or restored after processing.
+- Publisher tests verify existing outbox recovery semantics remain intact with scoped structured context.
+
+Remaining scope:
+
 - OpenTelemetry traces across API, Kafka, orchestrator, scheduler, and worker boundaries
 - Micrometer metrics and Prometheus/Grafana dashboards
 - Queue-latency, retry, timeout, saturation, and DLQ alerts

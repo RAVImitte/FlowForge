@@ -1,6 +1,8 @@
 package io.flowforge.controlplane.adapter.out.messaging;
 
 import io.flowforge.controlplane.config.OutboxProperties;
+import io.flowforge.observability.LogContext;
+import io.flowforge.observability.LogFields;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Gauge;
 import org.slf4j.Logger;
@@ -61,6 +63,18 @@ public class OutboxPublisher {
     }
 
     private boolean publish(OutboxMessage message) {
+        try (LogContext ignored = LogContext.open(
+                LogFields.CORRELATION_ID, message.workflowExecutionId(),
+                LogFields.EVENT_ID, message.id(),
+                LogFields.WORKFLOW_EXECUTION_ID, message.workflowExecutionId(),
+                LogFields.TASK_EXECUTION_ID, message.taskExecutionId(),
+                LogFields.KAFKA_TOPIC, message.topic()
+        )) {
+            return publishWithContext(message);
+        }
+    }
+
+    private boolean publishWithContext(OutboxMessage message) {
         try {
             sender.send(message, properties.publishTimeout());
         } catch (Exception failure) {

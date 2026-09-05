@@ -9,6 +9,7 @@
         <dependency><groupId>io.flowforge</groupId><artifactId>flowforge-domain</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.flowforge</groupId><artifactId>flowforge-application</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.flowforge</groupId><artifactId>flowforge-messaging</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.flowforge</groupId><artifactId>flowforge-observability</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.flowforge</groupId><artifactId>flowforge-kafka-support</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>

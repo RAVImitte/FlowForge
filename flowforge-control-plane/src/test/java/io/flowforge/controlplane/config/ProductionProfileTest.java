@@ -25,6 +25,8 @@ class ProductionProfileTest {
         assertThat(properties.getProperty("flowforge.results.consumer-enabled")).isEqualTo("true");
         assertThat(properties.getProperty("flowforge.leases.heartbeat-consumer-enabled")).isEqualTo("true");
         assertThat(properties.getProperty("flowforge.leases.reaper-enabled")).isEqualTo("true");
+        assertThat(properties.getProperty("logging.structured.format.console"))
+                .isEqualTo("${FLOWFORGE_LOG_FORMAT:ecs}");
 
         assertThatCode(() -> new DispatchTopologyValidator(
                 true,

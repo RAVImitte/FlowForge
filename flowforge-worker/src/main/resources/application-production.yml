@@ -1,0 +1,4 @@
+logging:
+  structured:
+    format:
+      console: ${FLOWFORGE_LOG_FORMAT:ecs}

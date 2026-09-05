@@ -3,8 +3,12 @@ package io.flowforge.worker.messaging;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
+import io.flowforge.observability.LogContext;
+import io.flowforge.observability.LogFields;
 import io.flowforge.worker.application.WorkerCommandProcessor;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -16,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 @Component
 @ConditionalOnProperty(prefix = "flowforge.kafka", name = "enabled", havingValue = "true")
 public class TaskCommandConsumer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TaskCommandConsumer.class);
     private static final TypeReference<MessageEnvelope<TaskCommandV1>> COMMAND_TYPE = new TypeReference<>() {
     };
 
@@ -33,10 +38,39 @@ public class TaskCommandConsumer {
             concurrency = "${flowforge.worker.execution.concurrency:1}"
     )
     public void consume(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
-        MessageEnvelope<TaskCommandV1> envelope = decode(record.value());
-        validate(record, envelope);
-        processor.process(envelope, record.value());
-        acknowledgment.acknowledge();
+        try (LogContext recordContext = LogContext.open(
+                LogFields.KAFKA_TOPIC, record.topic(),
+                LogFields.KAFKA_PARTITION, record.partition(),
+                LogFields.KAFKA_OFFSET, record.offset()
+        )) {
+            MessageEnvelope<TaskCommandV1> envelope;
+            try {
+                envelope = decode(record.value());
+                validate(record, envelope);
+            } catch (RuntimeException failure) {
+                LOGGER.warn("Task command validation failed", failure);
+                throw failure;
+            }
+            TaskCommandV1 command = envelope.payload();
+            try (LogContext messageContext = LogContext.open(
+                    LogFields.CORRELATION_ID, envelope.correlationId(),
+                    LogFields.EVENT_ID, envelope.eventId(),
+                    LogFields.WORKFLOW_EXECUTION_ID, command.workflowExecutionId(),
+                    LogFields.TASK_EXECUTION_ID, command.taskExecutionId(),
+                    LogFields.TASK_KEY, command.taskKey(),
+                    LogFields.ATTEMPT_NUMBER, command.attemptNumber(),
+                    LogFields.FENCING_TOKEN, command.fencingToken()
+            )) {
+                try {
+                    processor.process(envelope, record.value());
+                    acknowledgment.acknowledge();
+                    LOGGER.debug("Task command completed and acknowledged");
+                } catch (RuntimeException failure) {
+                    LOGGER.warn("Task command handling failed", failure);
+                    throw failure;
+                }
+            }
+        }
     }
 
     private MessageEnvelope<TaskCommandV1> decode(String payload) {

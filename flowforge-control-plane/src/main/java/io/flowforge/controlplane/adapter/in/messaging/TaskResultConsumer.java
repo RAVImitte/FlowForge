@@ -7,8 +7,12 @@ import io.flowforge.application.execution.TaskResultIngestionOutcome;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskResultV1;
+import io.flowforge.observability.LogContext;
+import io.flowforge.observability.LogFields;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.Acknowledgment;
@@ -23,6 +27,7 @@ import java.time.Clock;
 @ConditionalOnProperty(prefix = "flowforge.kafka", name = "enabled", havingValue = "true")
 @ConditionalOnProperty(prefix = "flowforge.results", name = "consumer-enabled", havingValue = "true")
 public class TaskResultConsumer {
+    private static final Logger LOGGER = LoggerFactory.getLogger(TaskResultConsumer.class);
     private static final TypeReference<MessageEnvelope<TaskResultV1>> RESULT_TYPE = new TypeReference<>() {
     };
 
@@ -48,33 +53,65 @@ public class TaskResultConsumer {
             groupId = "${flowforge.results.consumer-group:flowforge-control-plane-results-v1}"
     )
     public void consume(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
-        try {
-            MessageEnvelope<TaskResultV1> envelope = decode(record.value());
-            validate(record, envelope);
+        try (LogContext recordContext = recordContext(record)) {
+            MessageEnvelope<TaskResultV1> envelope;
+            try {
+                envelope = decode(record.value());
+                validate(record, envelope);
+            } catch (RuntimeException failure) {
+                recordFailure(failure);
+                throw failure;
+            }
             TaskResultV1 payload = envelope.payload();
-            TaskResultIngestionOutcome outcome = ingestion.ingest(
-                    new InboundTaskResult(
-                            envelope.eventId(),
-                            payload.workflowExecutionId(),
-                            payload.taskExecutionId(),
-                            payload.taskKey(),
-                            payload.expectedStateVersion(),
-                            payload.attemptNumber(),
-                            TaskOutcome.valueOf(payload.outcome().name()),
-                            payload.errorCode(),
-                            payload.errorMessage(),
-                            payload.retryable(),
-                            payload.fencingToken()
-                    ),
-                    record.value(),
-                    clock.instant()
-            );
-            meters.counter("flowforge.results.consumed", "outcome", outcome.name()).increment();
-            acknowledgment.acknowledge();
-        } catch (RuntimeException failure) {
-            meters.counter("flowforge.results.failures").increment();
-            throw failure;
+            try (LogContext messageContext = LogContext.open(
+                    LogFields.CORRELATION_ID, envelope.correlationId(),
+                    LogFields.EVENT_ID, envelope.eventId(),
+                    LogFields.WORKFLOW_EXECUTION_ID, payload.workflowExecutionId(),
+                    LogFields.TASK_EXECUTION_ID, payload.taskExecutionId(),
+                    LogFields.TASK_KEY, payload.taskKey(),
+                    LogFields.ATTEMPT_NUMBER, payload.attemptNumber(),
+                    LogFields.FENCING_TOKEN, payload.fencingToken()
+            )) {
+                try {
+                    TaskResultIngestionOutcome outcome = ingestion.ingest(
+                            new InboundTaskResult(
+                                    envelope.eventId(),
+                                    payload.workflowExecutionId(),
+                                    payload.taskExecutionId(),
+                                    payload.taskKey(),
+                                    payload.expectedStateVersion(),
+                                    payload.attemptNumber(),
+                                    TaskOutcome.valueOf(payload.outcome().name()),
+                                    payload.errorCode(),
+                                    payload.errorMessage(),
+                                    payload.retryable(),
+                                    payload.fencingToken()
+                            ),
+                            record.value(),
+                            clock.instant()
+                    );
+                    meters.counter("flowforge.results.consumed", "outcome", outcome.name()).increment();
+                    acknowledgment.acknowledge();
+                    LOGGER.debug("Task result applied and acknowledged: outcome={}", outcome);
+                } catch (RuntimeException failure) {
+                    recordFailure(failure);
+                    throw failure;
+                }
+            }
         }
+    }
+
+    private LogContext recordContext(ConsumerRecord<String, String> record) {
+        return LogContext.open(
+                LogFields.KAFKA_TOPIC, record.topic(),
+                LogFields.KAFKA_PARTITION, record.partition(),
+                LogFields.KAFKA_OFFSET, record.offset()
+        );
+    }
+
+    private void recordFailure(RuntimeException failure) {
+        meters.counter("flowforge.results.failures").increment();
+        LOGGER.warn("Task result consumption failed", failure);
     }
 
     private MessageEnvelope<TaskResultV1> decode(String payload) {

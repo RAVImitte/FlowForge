@@ -4,6 +4,8 @@ import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
 import io.flowforge.messaging.TaskHeartbeatV1;
+import io.flowforge.observability.LogContext;
+import io.flowforge.observability.LogFields;
 import io.flowforge.worker.config.WorkerProperties;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.producer.ProducerRecord;
@@ -71,43 +73,66 @@ public class WorkerHeartbeatPublisher {
     }
 
     private void publish(TaskCommandV1 command) {
-        try {
-            Instant now = clock.instant();
-            MessageEnvelope<TaskHeartbeatV1> envelope = new MessageEnvelope<>(
-                    UUID.randomUUID(),
-                    TaskHeartbeatV1.EVENT_TYPE,
-                    TaskHeartbeatV1.SCHEMA_VERSION,
-                    now,
-                    command.workflowExecutionId(),
-                    new TaskHeartbeatV1(
-                            command.workflowExecutionId(),
-                            command.taskExecutionId(),
-                            command.taskKey(),
-                            command.attemptNumber(),
-                            command.fencingToken(),
-                            worker.id()
-                    )
-            );
-            ProducerRecord<String, String> record = new ProducerRecord<>(
-                    FlowForgeTopics.TASK_HEARTBEATS_V1,
-                    command.taskExecutionId().toString(),
-                    objectMapper.writeValueAsString(envelope)
-            );
-            addHeader(record, "flowforge-event-id", envelope.eventId().toString());
-            addHeader(record, "flowforge-event-type", envelope.eventType());
-            addHeader(record, "flowforge-schema-version", Integer.toString(envelope.schemaVersion()));
-            addHeader(record, "flowforge-correlation-id", envelope.correlationId().toString());
-            kafka.send(record).whenComplete((result, failure) -> {
-                if (failure == null) {
-                    meters.counter("flowforge.worker.heartbeats.sent").increment();
-                } else {
-                    meters.counter("flowforge.worker.heartbeats.failures").increment();
-                    LOGGER.warn("Kafka rejected heartbeat for task {}", command.taskExecutionId(), failure);
-                }
-            });
-        } catch (RuntimeException failure) {
-            meters.counter("flowforge.worker.heartbeats.failures").increment();
-            LOGGER.warn("Could not publish heartbeat for task {}", command.taskExecutionId(), failure);
+        try (LogContext commandContext = LogContext.open(
+                LogFields.CORRELATION_ID, command.workflowExecutionId(),
+                LogFields.WORKFLOW_EXECUTION_ID, command.workflowExecutionId(),
+                LogFields.TASK_EXECUTION_ID, command.taskExecutionId(),
+                LogFields.TASK_KEY, command.taskKey(),
+                LogFields.ATTEMPT_NUMBER, command.attemptNumber(),
+                LogFields.FENCING_TOKEN, command.fencingToken(),
+                LogFields.WORKER_ID, worker.id(),
+                LogFields.KAFKA_TOPIC, FlowForgeTopics.TASK_HEARTBEATS_V1
+        )) {
+            try {
+                Instant now = clock.instant();
+                MessageEnvelope<TaskHeartbeatV1> envelope = new MessageEnvelope<>(
+                        UUID.randomUUID(),
+                        TaskHeartbeatV1.EVENT_TYPE,
+                        TaskHeartbeatV1.SCHEMA_VERSION,
+                        now,
+                        command.workflowExecutionId(),
+                        new TaskHeartbeatV1(
+                                command.workflowExecutionId(),
+                                command.taskExecutionId(),
+                                command.taskKey(),
+                                command.attemptNumber(),
+                                command.fencingToken(),
+                                worker.id()
+                        )
+                );
+                ProducerRecord<String, String> record = new ProducerRecord<>(
+                        FlowForgeTopics.TASK_HEARTBEATS_V1,
+                        command.taskExecutionId().toString(),
+                        objectMapper.writeValueAsString(envelope)
+                );
+                addHeader(record, "flowforge-event-id", envelope.eventId().toString());
+                addHeader(record, "flowforge-event-type", envelope.eventType());
+                addHeader(record, "flowforge-schema-version", Integer.toString(envelope.schemaVersion()));
+                addHeader(record, "flowforge-correlation-id", envelope.correlationId().toString());
+                kafka.send(record).whenComplete((result, failure) -> {
+                    try (LogContext eventContext = LogContext.open(
+                            LogFields.CORRELATION_ID, command.workflowExecutionId(),
+                            LogFields.EVENT_ID, envelope.eventId(),
+                            LogFields.WORKFLOW_EXECUTION_ID, command.workflowExecutionId(),
+                            LogFields.TASK_EXECUTION_ID, command.taskExecutionId(),
+                            LogFields.TASK_KEY, command.taskKey(),
+                            LogFields.ATTEMPT_NUMBER, command.attemptNumber(),
+                            LogFields.FENCING_TOKEN, command.fencingToken(),
+                            LogFields.WORKER_ID, worker.id(),
+                            LogFields.KAFKA_TOPIC, FlowForgeTopics.TASK_HEARTBEATS_V1
+                    )) {
+                        if (failure == null) {
+                            meters.counter("flowforge.worker.heartbeats.sent").increment();
+                        } else {
+                            meters.counter("flowforge.worker.heartbeats.failures").increment();
+                            LOGGER.warn("Kafka rejected heartbeat", failure);
+                        }
+                    }
+                });
+            } catch (RuntimeException failure) {
+                meters.counter("flowforge.worker.heartbeats.failures").increment();
+                LOGGER.warn("Could not publish heartbeat", failure);
+            }
         }
     }
 
