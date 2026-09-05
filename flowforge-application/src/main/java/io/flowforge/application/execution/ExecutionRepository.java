@@ -16,5 +16,9 @@ public interface ExecutionRepository {
 
     List<TaskWorkItem> claimReadyTasks(int limit, Instant now);
 
+    default ReadyQueueSnapshot readyQueue(Instant now, int requestedLimit) {
+        return ReadyQueueSnapshot.unknown(requestedLimit);
+    }
+
     TaskCompletionResult completeTask(TaskCompletion completion, Instant now);
 }

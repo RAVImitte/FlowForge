@@ -128,3 +128,17 @@ flowforge:
     reconciliation-enabled: ${FLOWFORGE_CONCURRENCY_RECONCILIATION_ENABLED:false}
     reconciliation-batch-size: ${FLOWFORGE_CONCURRENCY_RECONCILIATION_BATCH_SIZE:200}
     reconciliation-interval-ms: ${FLOWFORGE_CONCURRENCY_RECONCILIATION_INTERVAL_MS:10000}
+  rate-limits:
+    mirror-ttl: ${FLOWFORGE_RATE_LIMIT_MIRROR_TTL:10m}
+    schedule-fires:
+      capacity: ${FLOWFORGE_SCHEDULE_RATE_CAPACITY:100}
+      refill-tokens: ${FLOWFORGE_SCHEDULE_RATE_REFILL_TOKENS:100}
+      refill-period: ${FLOWFORGE_SCHEDULE_RATE_REFILL_PERIOD:1s}
+    task-dispatch:
+      capacity: ${FLOWFORGE_DISPATCH_RATE_CAPACITY:200}
+      refill-tokens: ${FLOWFORGE_DISPATCH_RATE_REFILL_TOKENS:200}
+      refill-period: ${FLOWFORGE_DISPATCH_RATE_REFILL_PERIOD:1s}
+  backpressure:
+    max-pending-schedule-fires: ${FLOWFORGE_MAX_PENDING_SCHEDULE_FIRES:10000}
+    max-ready-tasks-per-workflow: ${FLOWFORGE_MAX_READY_TASKS_PER_WORKFLOW:1000}
+    retry-after: ${FLOWFORGE_ADMISSION_RETRY_AFTER:1s}

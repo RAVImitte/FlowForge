@@ -226,9 +226,9 @@ Phase 4 exit criteria are satisfied. Durable schedules, Redis coordination, rate
 
 Status: **IN PROGRESS**
 
-Completed milestones: **Slices 5.1-5.4 - Durable scheduling through concurrency enforcement**
+Completed milestones: **Slices 5.1-5.5 - Durable scheduling through admission backpressure**
 
-Next milestone: **Slice 5.5 - Rate limiting and admission backpressure**
+Next milestone: **Slice 5.6 - Rebalancing, resilience, and operations**
 
 Detailed implementation plan: [Phase 5 plan](PHASE_5_PLAN.md)
 
@@ -258,15 +258,21 @@ Completed capabilities:
 - Permit release across completion, retry, cancellation, timeout, and orphan-recovery paths
 - Periodic permit renewal, orphan cleanup, expired-token replacement, and Redis reconstruction from execution state
 - Bounded concurrency rejection, deferral, permit-lifecycle, and reconciliation metrics
+- PostgreSQL-authoritative atomic token buckets for schedule fires and both task-dispatch paths
+- Versioned, TTL-bounded Redis rate-limit mirrors reconstructed from durable bucket state
+- Hard pending-schedule and per-workflow ready-task queue bounds across replicas
+- Retryable HTTP 429 overload responses with `Retry-After` guidance
+- Saturation, throttling, queue-depth, queue-age, retry-after, and rejected-admission metrics
 - Domain, cron-calculation, HTTP, and PostgreSQL persistence tests
 
 Verification notes:
 
-- The complete Maven reactor succeeds across 53 suites with 165 tests passing and no failures, errors, or skipped tests.
+- The complete Maven reactor succeeds across 54 suites with 173 tests passing and no failures, errors, or skipped tests.
 - Rancher Desktop-backed PostgreSQL tests verify schedule round trips, lifecycle mutations, unpublished-workflow rejection, and stale-version fencing.
 - Rancher Desktop-backed PostgreSQL tests verify disjoint competing-scheduler batches, deterministic execution identity, expired-lease takeover, and stale-token fencing.
 - Rancher Desktop-backed PostgreSQL and Redis tests verify concurrent capacity enforcement, permit ownership, expiry, key TTLs, full Redis key loss, and state reconstruction.
 - Rancher Desktop-backed tests verify concurrent workflow admission, task saturation deferral, retry/timeout/orphan release, expired-token replacement, and Redis reconstruction from active execution state.
+- Rancher Desktop-backed tests verify atomic fractional token refill, concurrent consumption without oversubscription, Redis rate-key reconstruction, pending/ready queue bounds, and retryable overload responses.
 - Redis remains outside the correctness boundary; PostgreSQL state and resource locks prevent oversubscription even when an ephemeral permit expires or disappears.
 
 Planned scope:

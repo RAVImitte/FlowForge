@@ -5,6 +5,7 @@ import io.flowforge.application.schedule.ScheduleFireRepository;
 import io.flowforge.application.schedule.ScheduleFireRunResult;
 import io.flowforge.application.schedule.ScheduleFireService;
 import io.flowforge.application.schedule.ScheduleMaterializationResult;
+import io.flowforge.application.schedule.QueueSnapshot;
 import io.flowforge.application.schedule.WorkflowScheduleService;
 import io.flowforge.application.workflow.WorkflowService;
 import io.flowforge.domain.schedule.CronSchedule;
@@ -122,6 +123,10 @@ class ScheduleTriggerIntegrationTest {
 
     @Test
     void competingSchedulersMaterializeAndClaimDisjointBatches() throws Exception {
+        jdbc.sql("DELETE FROM workflow_schedule_trigger WHERE status IN ('PENDING', 'PROCESSING')")
+                .update();
+        jdbc.sql("UPDATE workflow_schedule SET status = 'PAUSED' WHERE status = 'ACTIVE'")
+                .update();
         WorkflowDefinition workflow = publishedWorkflow("Competing schedulers");
         Instant due = now().minusSeconds(1);
         for (int index = 0; index < 12; index++) {
@@ -200,6 +205,38 @@ class ScheduleTriggerIntegrationTest {
         assertThat(replacement.attemptCount()).isEqualTo(2);
         assertThat(countExecutions(workflow.id())).isZero();
         assertThat(triggerStatuses(schedule.id())).containsExactly("FAILED");
+    }
+
+    @Test
+    void boundsPendingMaterializationAcrossTheDurableQueue() {
+        WorkflowDefinition workflow = publishedWorkflow("Pending queue bound");
+        WorkflowSchedule first = oneTimeSchedule(workflow.id(), MisfirePolicy.FIRE_ONCE);
+        WorkflowSchedule second = oneTimeSchedule(workflow.id(), MisfirePolicy.FIRE_ONCE);
+        Instant due = now().minusSeconds(1);
+        makeOneTimeDue(first.id(), due);
+        makeOneTimeDue(second.id(), due.plusNanos(1_000));
+        QueueSnapshot before = fireRepository.pendingQueue(now());
+
+        ScheduleMaterializationResult result = fireRepository.materializeDue(
+                10, Math.toIntExact(before.depth() + 1), now(), Duration.ofMinutes(1)
+        );
+
+        assertThat(result.pending()).isEqualTo(1);
+        assertThat(result.capacityDeferred()).isEqualTo(1);
+        assertThat(countTriggersForWorkflow(workflow.id())).isEqualTo(1);
+        assertThat(fireRepository.pendingQueue(now()).depth()).isEqualTo(before.depth() + 1);
+
+        jdbc.sql("DELETE FROM workflow_schedule_trigger WHERE workflow_id = :workflowId")
+                .param("workflowId", workflow.id())
+                .update();
+        jdbc.sql("""
+                UPDATE workflow_schedule
+                   SET status = 'DELETED', next_fire_at = COALESCE(next_fire_at, :now)
+                 WHERE workflow_id = :workflowId
+                """)
+                .param("workflowId", workflow.id())
+                .param("now", Timestamp.from(now()))
+                .update();
     }
 
     private WorkflowSchedule oneTimeSchedule(UUID workflowId, MisfirePolicy policy) {

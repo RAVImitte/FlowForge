@@ -1,5 +1,8 @@
 package io.flowforge.application.execution;
 
+import io.flowforge.application.coordination.TokenBucketDecision;
+import io.flowforge.application.coordination.TokenBucketPolicy;
+import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRun;
 import org.junit.jupiter.api.BeforeEach;
@@ -7,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -42,6 +46,8 @@ class WorkflowExecutionServiceTest {
                     throw new AssertionError("Unexpected completion failure", failure);
                 }
         );
+        when(repository.readyQueue(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyInt()))
+                .thenAnswer(invocation -> ReadyQueueSnapshot.unknown(invocation.getArgument(1)));
     }
 
     @Test
@@ -82,6 +88,28 @@ class WorkflowExecutionServiceTest {
         assertThat(completion.getValue().taskRunId()).isEqualTo(taskId);
         assertThat(completion.getValue().expectedStateVersion()).isEqualTo(1);
         assertThat(completion.getValue().outcome()).isEqualTo(TaskOutcome.SUCCEEDED);
+    }
+
+    @Test
+    void rateLimitsTaskClaimsBeforeChangingDurableTaskState() {
+        TokenBucketRateLimiter limiter = mock(TokenBucketRateLimiter.class);
+        AdmissionBackpressureObserver observer = mock(AdmissionBackpressureObserver.class);
+        TokenBucketPolicy policy = new TokenBucketPolicy(2, 1, Duration.ofSeconds(1));
+        WorkflowExecutionService limited = new WorkflowExecutionService(
+                repository, dispatcher, Clock.fixed(NOW, ZoneOffset.UTC),
+                (workItem, failure) -> { }, limiter, policy, observer
+        );
+        when(repository.readyQueue(NOW, 10))
+                .thenReturn(new ReadyQueueSnapshot(4, Duration.ofSeconds(9)));
+        when(limiter.consume("task-dispatch", policy, 4, NOW))
+                .thenReturn(new TokenBucketDecision(1, Duration.ofSeconds(1)));
+        when(repository.claimReadyTasks(1, NOW)).thenReturn(List.of());
+
+        assertThat(limited.dispatchReadyTasks(10)).isZero();
+
+        verify(observer).readyQueueObserved(4, Duration.ofSeconds(9));
+        verify(observer).taskDispatchThrottled(4, 1, Duration.ofSeconds(1));
+        verify(repository).claimReadyTasks(1, NOW);
     }
 
     private static WorkflowExecution execution() {

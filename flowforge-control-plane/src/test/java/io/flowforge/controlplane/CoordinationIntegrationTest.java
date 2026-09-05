@@ -4,6 +4,8 @@ import io.flowforge.application.coordination.CoordinationPermit;
 import io.flowforge.application.coordination.CoordinationPermitLedger;
 import io.flowforge.application.coordination.CoordinationPermitService;
 import io.flowforge.application.coordination.EphemeralPermitStore;
+import io.flowforge.application.coordination.TokenBucketPolicy;
+import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.application.execution.ConcurrencyPermitRecovery;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskCompletion;
@@ -75,6 +77,9 @@ class CoordinationIntegrationTest {
     CoordinationPermitLedger ledger;
 
     @Autowired
+    TokenBucketRateLimiter rateLimiter;
+
+    @Autowired
     EphemeralPermitStore store;
 
     @Autowired
@@ -94,6 +99,25 @@ class CoordinationIntegrationTest {
 
     @Autowired
     JdbcClient jdbc;
+
+    @Test
+    void rebuildsVersionedRedisRateLimitStateFromThePostgresBucket() {
+        String bucket = "integration/rate-limit/" + UUID.randomUUID();
+        String redisKey = keyspace.rateLimitKey(bucket);
+        Instant now = Instant.now();
+        TokenBucketPolicy policy = new TokenBucketPolicy(3, 1, Duration.ofHours(1));
+
+        assertThat(rateLimiter.consume(bucket, policy, 2, now).granted()).isEqualTo(2);
+        assertThat(redis.opsForHash().get(redisKey, "availableTokens")).isEqualTo("1.0");
+        assertThat(redis.getExpire(redisKey)).isPositive();
+
+        redis.delete(redisKey);
+        assertThat(redis.hasKey(redisKey)).isFalse();
+        assertThat(rateLimiter.consume(bucket, policy, 1, now).granted()).isEqualTo(1);
+
+        assertThat(redis.opsForHash().get(redisKey, "availableTokens")).isEqualTo("0.0");
+        assertThat(redis.opsForHash().get(redisKey, "stateVersion")).isEqualTo("2");
+    }
 
     @Test
     void mirrorsExecutionPermitsAndRebuildsThemFromActiveDatabaseState() {

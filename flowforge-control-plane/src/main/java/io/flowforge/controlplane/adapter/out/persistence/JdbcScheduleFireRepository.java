@@ -5,6 +5,7 @@ import io.flowforge.application.schedule.ScheduleCalculator;
 import io.flowforge.application.schedule.ScheduleFireRepository;
 import io.flowforge.application.schedule.ScheduleFireService;
 import io.flowforge.application.schedule.ScheduleMaterializationResult;
+import io.flowforge.application.schedule.QueueSnapshot;
 import io.flowforge.domain.schedule.CronSchedule;
 import io.flowforge.domain.schedule.MisfirePolicy;
 import io.flowforge.domain.schedule.OneTimeSchedule;
@@ -42,6 +43,20 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
             Instant now,
             Duration misfireThreshold
     ) {
+        return materializeDue(limit, Integer.MAX_VALUE, now, misfireThreshold);
+    }
+
+    @Override
+    @Transactional
+    public ScheduleMaterializationResult materializeDue(
+            int limit,
+            int maxPending,
+            Instant now,
+            Duration misfireThreshold
+    ) {
+        lockCapacity("backpressure:schedule-pending");
+        long pendingCount = pendingCount();
+        int availableCapacity = (int) Math.max(0, Math.min(limit, maxPending - pendingCount));
         List<DueSchedule> due = jdbc.sql("""
                 SELECT id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
                        misfire_policy, next_fire_at
@@ -53,7 +68,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                  LIMIT :limit
                 """)
                 .param("now", timestamp(now))
-                .param("limit", limit)
+                .param("limit", availableCapacity)
                 .query(this::mapDueSchedule)
                 .list();
 
@@ -69,7 +84,27 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
             advance(schedule, now);
             if (shouldSkip) skipped++; else pending++;
         }
-        return new ScheduleMaterializationResult(due.size(), pending, skipped);
+        int capacityDeferred = pendingCount + pending >= maxPending && hasDueSchedule(now) ? 1 : 0;
+        return new ScheduleMaterializationResult(due.size(), pending, skipped, capacityDeferred);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public QueueSnapshot pendingQueue(Instant now) {
+        return jdbc.sql("""
+                SELECT COUNT(*) AS depth, MIN(created_at) AS oldest
+                  FROM workflow_schedule_trigger
+                 WHERE status IN ('PENDING', 'PROCESSING')
+                """)
+                .query((rs, rowNumber) -> {
+                    long depth = rs.getLong("depth");
+                    Instant oldest = instant(rs.getObject("oldest"));
+                    Duration age = oldest == null || oldest.isAfter(now)
+                            ? Duration.ZERO
+                            : Duration.between(oldest, now);
+                    return new QueueSnapshot(depth, age);
+                })
+                .single();
     }
 
     @Override
@@ -80,6 +115,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
             Instant now,
             Duration leaseDuration
     ) {
+        if (limit == 0) return List.of();
         UUID claimToken = UUID.randomUUID();
         return jdbc.sql("""
                 WITH candidates AS (
@@ -119,6 +155,36 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                         rs.getObject("claim_token", UUID.class)
                 ))
                 .list();
+    }
+
+    private void lockCapacity(String resourceKey) {
+        jdbc.sql("""
+                SELECT pg_advisory_xact_lock(hashtextextended(:resourceKey, 0))
+                """)
+                .param("resourceKey", resourceKey)
+                .query((rs, rowNumber) -> 1)
+                .single();
+    }
+
+    private long pendingCount() {
+        return jdbc.sql("""
+                SELECT COUNT(*) FROM workflow_schedule_trigger
+                 WHERE status IN ('PENDING', 'PROCESSING')
+                """)
+                .query(Long.class)
+                .single();
+    }
+
+    private boolean hasDueSchedule(Instant now) {
+        return jdbc.sql("""
+                SELECT EXISTS(
+                    SELECT 1 FROM workflow_schedule
+                     WHERE status = 'ACTIVE' AND next_fire_at <= :now
+                )
+                """)
+                .param("now", timestamp(now))
+                .query(Boolean.class)
+                .single();
     }
 
     @Override
@@ -282,6 +348,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
     }
 
     private static Instant instant(Object value) {
+        if (value == null) return null;
         if (value instanceof OffsetDateTime timestamp) return timestamp.toInstant();
         if (value instanceof Timestamp timestamp) return timestamp.toInstant();
         if (value instanceof Instant instant) return instant;

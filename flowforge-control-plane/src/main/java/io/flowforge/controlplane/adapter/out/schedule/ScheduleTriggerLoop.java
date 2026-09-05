@@ -61,6 +61,10 @@ public class ScheduleTriggerLoop implements ApplicationRunner {
             increment("flowforge.schedules.triggers.failed", result.failed());
             increment("flowforge.schedules.triggers.released", result.released());
             increment("flowforge.schedules.triggers.stale.acknowledgements", result.staleAcknowledgements());
+            increment("flowforge.schedules.triggers.throttled", result.throttled());
+            increment("flowforge.schedules.materialization.capacity.deferred", result.capacityDeferred());
+            meters.summary("flowforge.schedules.pending.depth").record(result.pendingDepth());
+            meters.summary("flowforge.schedules.pending.oldest.age").record(result.oldestPendingAgeMillis());
             if (result.materialized() > 0 || result.claimed() > 0) {
                 LOGGER.debug(
                         "Processed schedules: materialized={}, skipped={}, claimed={}, started={}, failed={}, released={}",

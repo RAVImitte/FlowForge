@@ -7,6 +7,10 @@ public record ScheduleFireRunResult(
         int started,
         int failed,
         int released,
-        int staleAcknowledgements
+        int staleAcknowledgements,
+        int throttled,
+        int capacityDeferred,
+        long pendingDepth,
+        long oldestPendingAgeMillis
 ) {
 }

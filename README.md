@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable scheduling, Redis-assisted coordination, and workflow/task concurrency enforcement are complete; rate limiting and admission backpressure are next.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable scheduling, Redis-assisted coordination, concurrency enforcement, rate limiting, and admission backpressure are complete; resilience and operations are next.
 
 ## Current capabilities
 
@@ -66,8 +66,14 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Release task permits on success, failure, retry, cancellation, timeout, and orphan-lease recovery paths
 - Renew active permits, retire leaked ownership, and rebuild Redis state from active PostgreSQL executions
 - Expose bounded workflow rejection, task deferral, permit lifecycle, and reconciliation metrics
+- Enforce PostgreSQL-authoritative token buckets across scheduler and task-dispatch replicas
+- Mirror versioned token-bucket state into TTL-bounded Redis keys and rebuild it after key loss
+- Bound pending schedule triggers and per-workflow ready-task queues before resource exhaustion
+- Delay schedule fires and task claims when rate capacity is exhausted without losing durable work
+- Return HTTP 429 overload responses with explicit `Retry-After` guidance
+- Expose saturation, throttling, queue-depth, queue-age, and rejected-admission metrics
 
-Phase 4 is complete. Phase 5 Slices 5.1-5.4 are verified across PostgreSQL, Kafka, and Redis. Slice 5.5 adds rate limiting and admission backpressure.
+Phase 4 is complete. Phase 5 Slices 5.1-5.5 are verified across PostgreSQL, Kafka, and Redis. Slice 5.6 completes rebalancing, resilience, and operational documentation.
 
 ## Prerequisites
 
@@ -106,7 +112,7 @@ Run all tests:
 .\mvnw.cmd verify
 ```
 
-Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They are skipped when a Docker-compatible runtime is unavailable; all other tests still run.
+Infrastructure integration tests use PostgreSQL, Kafka, and Redis Testcontainers. They are skipped when a Docker-compatible runtime is unavailable; all other tests still run.
 
 ## Configuration
 
@@ -170,6 +176,16 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `FLOWFORGE_CONCURRENCY_RECONCILIATION_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_CONCURRENCY_RECONCILIATION_BATCH_SIZE` | `200` |
 | `FLOWFORGE_CONCURRENCY_RECONCILIATION_INTERVAL_MS` | `10000` |
+| `FLOWFORGE_SCHEDULE_RATE_CAPACITY` | `100` |
+| `FLOWFORGE_SCHEDULE_RATE_REFILL_TOKENS` | `100` |
+| `FLOWFORGE_SCHEDULE_RATE_REFILL_PERIOD` | `1s` |
+| `FLOWFORGE_DISPATCH_RATE_CAPACITY` | `200` |
+| `FLOWFORGE_DISPATCH_RATE_REFILL_TOKENS` | `200` |
+| `FLOWFORGE_DISPATCH_RATE_REFILL_PERIOD` | `1s` |
+| `FLOWFORGE_RATE_LIMIT_MIRROR_TTL` | `10m` |
+| `FLOWFORGE_MAX_PENDING_SCHEDULE_FIRES` | `10000` |
+| `FLOWFORGE_MAX_READY_TASKS_PER_WORKFLOW` | `1000` |
+| `FLOWFORGE_ADMISSION_RETRY_AFTER` | `1s` |
 | `FLOWFORGE_INSTANCE_ID` | Generated per process |
 | `FLOWFORGE_WORKER_ID` | Generated per process |
 | `FLOWFORGE_WORKER_GROUP` | `flowforge-workers-v1` |

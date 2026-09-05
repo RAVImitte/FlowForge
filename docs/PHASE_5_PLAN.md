@@ -15,7 +15,7 @@ Redis is an optimization and short-lived coordination layer. A Redis restart may
 - Time zones are explicit IANA zone IDs and daylight-saving transitions have deterministic behavior.
 - Misfire behavior is explicit: catch up once or skip to the next future occurrence. FlowForge never creates an unbounded catch-up storm.
 - Multiple scheduler replicas may run simultaneously and must claim disjoint due work.
-- Redis permits and rate-limit keys are leased, token-owned, and reconstructable from PostgreSQL state.
+- Redis permit keys are leased and token-owned; rate-limit keys are versioned, TTL-bounded, and reconstructable from PostgreSQL state.
 - Admission control rejects or delays work before queues and connection pools become unbounded.
 - Schedule pause, resume, update, and deletion use optimistic concurrency.
 
@@ -115,7 +115,7 @@ Implemented checkpoint:
 
 ### Slice 5.5: Rate limiting and admission backpressure
 
-Status: **NEXT**
+Status: **COMPLETED**
 
 - Add atomic token-bucket rate limiting for schedule fires and task dispatch.
 - Bound pending scheduled work and per-workflow ready queues.
@@ -124,9 +124,22 @@ Status: **NEXT**
 
 Exit: overload is visible and bounded; the platform sheds or delays work according to policy instead of exhausting resources.
 
+Implemented checkpoint:
+
+- Added PostgreSQL-authoritative token buckets with fractional refill, atomic row locking, partial batch grants, and precise retry guidance across replicas.
+- Applied the shared dispatch bucket before in-process claims, polling outbox enqueueing, and result-driven downstream command enqueueing; applied a separate bucket before schedule-trigger claims.
+- Added versioned, TTL-bounded Redis bucket mirrors whose monotonic state versions prevent stale after-commit callbacks from overwriting newer state; PostgreSQL consumption rebuilds missing keys.
+- Bounded pending schedule-trigger materialization with a transaction-scoped capacity lock and bounded per-workflow ready queues with serialized admission and DAG promotion.
+- Returned explicit HTTP 429 responses with `Retry-After` headers for both workflow-concurrency and ready-queue saturation.
+- Added bounded saturation, throttling, rejected-admission, queue-depth, queue-age, and retry-after metrics.
+- Verified fractional refill, concurrent capacity enforcement, Redis key reconstruction, pending-queue bounds, ready-queue rejection, scheduler replica safety, and HTTP retry guidance.
+- Verified the complete Maven reactor: 173 tests across 54 suites, with no failures, errors, or skipped tests.
+
+Next: **Slice 5.6 - Rebalancing, resilience, and operations**
+
 ### Slice 5.6: Rebalancing, resilience, and operations
 
-Status: **PLANNED**
+Status: **NEXT**
 
 - Verify scheduler, control-plane, worker, PostgreSQL, Kafka, and Redis restart combinations.
 - Test graceful consumer rebalancing while permits and scheduled fires are in flight.

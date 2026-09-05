@@ -1,6 +1,7 @@
 package io.flowforge.controlplane;
 
 import io.flowforge.application.execution.ExecutionRepository;
+import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.ConcurrencyPermitRecovery;
 import io.flowforge.application.execution.TaskCompletion;
@@ -47,7 +48,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @SpringBootTest(properties = {
         "flowforge.execution.dispatch-enabled=false",
         "flowforge.retries.scheduler-enabled=false",
-        "flowforge.timeouts.reaper-enabled=false"
+        "flowforge.timeouts.reaper-enabled=false",
+        "flowforge.backpressure.max-ready-tasks-per-workflow=2"
 })
 @Testcontainers(disabledWithoutDocker = true)
 class WorkflowExecutionPersistenceIntegrationTest {
@@ -80,6 +82,33 @@ class WorkflowExecutionPersistenceIntegrationTest {
         jdbc.sql("DELETE FROM workflow_execution").update();
         jdbc.sql("DELETE FROM coordination_permit WHERE resource_key LIKE 'concurrency:%'").update();
         jdbc.sql("DELETE FROM coordination_resource WHERE resource_key LIKE 'concurrency:%'").update();
+        jdbc.sql("DELETE FROM coordination_resource WHERE resource_key LIKE 'backpressure:%'").update();
+    }
+
+    @Test
+    void rejectsAdmissionBeforeThePerWorkflowReadyQueueCanGrowUnbounded() {
+        WorkflowDefinition published = publish(workflow(List.of(task("ROOT")), List.of()));
+        executionRepository.start(published.id(), "queue-limit-1", TIME);
+        executionRepository.start(published.id(), "queue-limit-2", TIME);
+
+        assertThatThrownBy(() -> executionRepository.start(
+                published.id(), "queue-limit-3", TIME.plusSeconds(1)
+        )).isInstanceOf(AdmissionOverloadedException.class)
+                .satisfies(failure -> {
+                    AdmissionOverloadedException overloaded = (AdmissionOverloadedException) failure;
+                    assertThat(overloaded.limit()).isEqualTo(2);
+                    assertThat(overloaded.retryAfter()).isEqualTo(Duration.ofSeconds(1));
+                });
+
+        long ready = jdbc.sql("""
+                SELECT COUNT(*) FROM task_execution te
+                JOIN workflow_execution we ON we.id = te.workflow_execution_id
+                WHERE we.workflow_id = :workflowId AND te.status = 'READY'
+                """)
+                .param("workflowId", published.id())
+                .query(Long.class)
+                .single();
+        assertThat(ready).isEqualTo(2);
     }
 
     @Test
@@ -201,7 +230,7 @@ class WorkflowExecutionPersistenceIntegrationTest {
                         try {
                             executionRepository.start(published.id(), "replica-" + index, TIME);
                             return true;
-                        } catch (ConcurrencyLimitExceededException saturated) {
+                        } catch (ConcurrencyLimitExceededException | AdmissionOverloadedException saturated) {
                             return false;
                         }
                     }))

@@ -30,6 +30,13 @@ public class RedisCoordinationKeyspace {
         return "flowforge:" + namespace + ":coordination:{" + sha256(resourceKey.strip()) + "}";
     }
 
+    public String rateLimitKey(String bucketKey) {
+        if (bucketKey == null || bucketKey.isBlank()) {
+            throw new IllegalArgumentException("bucketKey must not be blank");
+        }
+        return "flowforge:" + namespace + ":rate-limit:{" + sha256(bucketKey.strip()) + "}";
+    }
+
     private static String sha256(String value) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256")

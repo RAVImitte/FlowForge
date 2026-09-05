@@ -1,5 +1,8 @@
 package io.flowforge.application.schedule;
 
+import io.flowforge.application.coordination.TokenBucketDecision;
+import io.flowforge.application.coordination.TokenBucketPolicy;
+import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.application.execution.WorkflowExecutionService;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.domain.execution.WorkflowExecution;
@@ -45,8 +48,9 @@ class ScheduleFireServiceTest {
                 Duration.ofSeconds(5),
                 Duration.ofMinutes(1)
         );
-        when(repository.materializeDue(10, NOW, Duration.ofMinutes(1)))
+        when(repository.materializeDue(10, 1_000_000, NOW, Duration.ofMinutes(1)))
                 .thenReturn(ScheduleMaterializationResult.empty());
+        when(repository.pendingQueue(NOW)).thenReturn(new QueueSnapshot(10, Duration.ofSeconds(3)));
     }
 
     @Test
@@ -112,6 +116,32 @@ class ScheduleFireServiceTest {
         assertThat(first).isEqualTo(duplicate);
         assertThat(first).contains(scheduleId.toString(), "1788611696", "123456000");
         assertThat(first).hasSizeLessThanOrEqualTo(200);
+    }
+
+    @Test
+    void throttlesClaimsBeforeTakingDurableScheduleLeases() {
+        TokenBucketRateLimiter limiter = mock(TokenBucketRateLimiter.class);
+        ScheduleBackpressureObserver observer = mock(ScheduleBackpressureObserver.class);
+        TokenBucketPolicy policy = new TokenBucketPolicy(2, 2, Duration.ofSeconds(1));
+        ScheduleFireService limited = new ScheduleFireService(
+                repository, executions, Clock.fixed(NOW, ZoneOffset.UTC), "scheduler-1",
+                Duration.ofSeconds(30), Duration.ofSeconds(5), Duration.ofMinutes(1),
+                100, limiter, policy, observer
+        );
+        when(repository.materializeDue(10, 100, NOW, Duration.ofMinutes(1)))
+                .thenReturn(ScheduleMaterializationResult.empty());
+        when(repository.pendingQueue(NOW)).thenReturn(new QueueSnapshot(5, Duration.ofSeconds(7)));
+        when(limiter.consume("schedule-fires", policy, 5, NOW))
+                .thenReturn(new TokenBucketDecision(2, Duration.ofMillis(500)));
+        when(repository.claimPending(2, "scheduler-1", NOW, Duration.ofSeconds(30)))
+                .thenReturn(List.of());
+
+        ScheduleFireRunResult result = limited.runOnce(10, 10);
+
+        assertThat(result.throttled()).isEqualTo(3);
+        assertThat(result.pendingDepth()).isEqualTo(5);
+        verify(observer).scheduleFiresThrottled(5, 2, Duration.ofMillis(500));
+        verify(repository).claimPending(2, "scheduler-1", NOW, Duration.ofSeconds(30));
     }
 
     private static ClaimedScheduleFire fire(int suffix) {

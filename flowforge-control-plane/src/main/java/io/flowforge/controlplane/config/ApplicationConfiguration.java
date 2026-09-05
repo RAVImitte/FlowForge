@@ -4,6 +4,9 @@ import io.flowforge.application.coordination.CoordinationObserver;
 import io.flowforge.application.coordination.CoordinationPermitLedger;
 import io.flowforge.application.coordination.CoordinationPermitService;
 import io.flowforge.application.coordination.EphemeralPermitStore;
+import io.flowforge.application.coordination.TokenBucketPolicy;
+import io.flowforge.application.coordination.TokenBucketRateLimiter;
+import io.flowforge.application.execution.AdmissionBackpressureObserver;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
@@ -11,6 +14,7 @@ import io.flowforge.application.schedule.ScheduleCalculator;
 import io.flowforge.application.schedule.ScheduleFireRepository;
 import io.flowforge.application.schedule.ScheduleFireService;
 import io.flowforge.application.schedule.ScheduleRepository;
+import io.flowforge.application.schedule.ScheduleBackpressureObserver;
 import io.flowforge.application.schedule.WorkflowScheduleService;
 import io.flowforge.application.workflow.WorkflowRepository;
 import io.flowforge.application.workflow.WorkflowService;
@@ -75,7 +79,13 @@ public class ApplicationConfiguration {
             @Value("${flowforge.scheduling.instance-id:${spring.application.name}-${random.uuid}}") String instanceId,
             @Value("${flowforge.scheduling.lease-duration:30s}") Duration leaseDuration,
             @Value("${flowforge.scheduling.retry-delay:5s}") Duration retryDelay,
-            @Value("${flowforge.scheduling.misfire-threshold:1m}") Duration misfireThreshold
+            @Value("${flowforge.scheduling.misfire-threshold:1m}") Duration misfireThreshold,
+            @Value("${flowforge.backpressure.max-pending-schedule-fires:10000}") int maxPending,
+            TokenBucketRateLimiter rateLimiter,
+            ScheduleBackpressureObserver backpressureObserver,
+            @Value("${flowforge.rate-limits.schedule-fires.capacity:100}") int capacity,
+            @Value("${flowforge.rate-limits.schedule-fires.refill-tokens:100}") int refillTokens,
+            @Value("${flowforge.rate-limits.schedule-fires.refill-period:1s}") Duration refillPeriod
     ) {
         return new ScheduleFireService(
                 fires,
@@ -84,7 +94,11 @@ public class ApplicationConfiguration {
                 instanceId,
                 leaseDuration,
                 retryDelay,
-                misfireThreshold
+                misfireThreshold,
+                maxPending,
+                rateLimiter,
+                new TokenBucketPolicy(capacity, refillTokens, refillPeriod),
+                backpressureObserver
         );
     }
 
@@ -92,7 +106,12 @@ public class ApplicationConfiguration {
     WorkflowExecutionService workflowExecutionService(
             ExecutionRepository repository,
             TaskDispatcher dispatcher,
-            Clock clock
+            Clock clock,
+            TokenBucketRateLimiter rateLimiter,
+            AdmissionBackpressureObserver backpressureObserver,
+            @Value("${flowforge.rate-limits.task-dispatch.capacity:200}") int capacity,
+            @Value("${flowforge.rate-limits.task-dispatch.refill-tokens:200}") int refillTokens,
+            @Value("${flowforge.rate-limits.task-dispatch.refill-period:1s}") Duration refillPeriod
     ) {
         return new WorkflowExecutionService(
                 repository,
@@ -103,7 +122,10 @@ public class ApplicationConfiguration {
                         workItem.taskRunId(),
                         workItem.workflowRunId(),
                         failure
-                )
+                ),
+                rateLimiter,
+                new TokenBucketPolicy(capacity, refillTokens, refillPeriod),
+                backpressureObserver
         );
     }
 

@@ -6,7 +6,24 @@ import java.util.List;
 import java.util.UUID;
 
 public interface ScheduleFireRepository {
-    ScheduleMaterializationResult materializeDue(int limit, Instant now, Duration misfireThreshold);
+    ScheduleMaterializationResult materializeDue(
+            int limit,
+            int maxPending,
+            Instant now,
+            Duration misfireThreshold
+    );
+
+    default ScheduleMaterializationResult materializeDue(
+            int limit,
+            Instant now,
+            Duration misfireThreshold
+    ) {
+        return materializeDue(limit, Integer.MAX_VALUE, now, misfireThreshold);
+    }
+
+    default QueueSnapshot pendingQueue(Instant now) {
+        return QueueSnapshot.empty();
+    }
 
     List<ClaimedScheduleFire> claimPending(
             int limit,

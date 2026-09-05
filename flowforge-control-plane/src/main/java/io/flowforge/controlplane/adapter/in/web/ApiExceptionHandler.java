@@ -1,6 +1,7 @@
 package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.application.execution.ExecutionConflictException;
+import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
@@ -35,7 +36,29 @@ public class ApiExceptionHandler {
         );
         detail.setProperty("workflowId", exception.workflowId());
         detail.setProperty("limit", exception.limit());
-        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS).body(detail);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .body(detail);
+    }
+
+    @ExceptionHandler(AdmissionOverloadedException.class)
+    ResponseEntity<ProblemDetail> admissionOverloaded(
+            AdmissionOverloadedException exception,
+            HttpServletRequest request
+    ) {
+        ProblemDetail detail = detail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "WORKFLOW_READY_QUEUE_SATURATED",
+                exception.getMessage(),
+                request
+        );
+        detail.setProperty("workflowId", exception.workflowId());
+        detail.setProperty("limit", exception.limit());
+        long retryAfterSeconds = Math.max(1, (exception.retryAfter().toMillis() + 999) / 1_000);
+        detail.setProperty("retryAfterSeconds", retryAfterSeconds);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", Long.toString(retryAfterSeconds))
+                .body(detail);
     }
 
     @ExceptionHandler(ScheduleNotFoundException.class)

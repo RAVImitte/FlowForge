@@ -1,8 +1,13 @@
 package io.flowforge.application.execution;
 
+import io.flowforge.application.coordination.TokenBucketDecision;
+import io.flowforge.application.coordination.TokenBucketPolicy;
+import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.domain.execution.WorkflowExecution;
 
 import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.BiConsumer;
@@ -14,6 +19,27 @@ public final class WorkflowExecutionService {
     private final TaskDispatcher dispatcher;
     private final Clock clock;
     private final BiConsumer<TaskWorkItem, Throwable> completionErrorHandler;
+    private final TokenBucketRateLimiter rateLimiter;
+    private final TokenBucketPolicy dispatchRateLimit;
+    private final AdmissionBackpressureObserver backpressureObserver;
+
+    public WorkflowExecutionService(
+            ExecutionRepository repository,
+            TaskDispatcher dispatcher,
+            Clock clock,
+            BiConsumer<TaskWorkItem, Throwable> completionErrorHandler,
+            TokenBucketRateLimiter rateLimiter,
+            TokenBucketPolicy dispatchRateLimit,
+            AdmissionBackpressureObserver backpressureObserver
+    ) {
+        this.repository = Objects.requireNonNull(repository);
+        this.dispatcher = Objects.requireNonNull(dispatcher);
+        this.clock = Objects.requireNonNull(clock);
+        this.completionErrorHandler = Objects.requireNonNull(completionErrorHandler);
+        this.rateLimiter = Objects.requireNonNull(rateLimiter);
+        this.dispatchRateLimit = Objects.requireNonNull(dispatchRateLimit);
+        this.backpressureObserver = Objects.requireNonNull(backpressureObserver);
+    }
 
     public WorkflowExecutionService(
             ExecutionRepository repository,
@@ -21,10 +47,15 @@ public final class WorkflowExecutionService {
             Clock clock,
             BiConsumer<TaskWorkItem, Throwable> completionErrorHandler
     ) {
-        this.repository = Objects.requireNonNull(repository);
-        this.dispatcher = Objects.requireNonNull(dispatcher);
-        this.clock = Objects.requireNonNull(clock);
-        this.completionErrorHandler = Objects.requireNonNull(completionErrorHandler);
+        this(
+                repository,
+                dispatcher,
+                clock,
+                completionErrorHandler,
+                (key, policy, requested, now) -> new TokenBucketDecision(requested, Duration.ZERO),
+                new TokenBucketPolicy(1_000, 1_000, Duration.ofSeconds(1)),
+                new AdmissionBackpressureObserver() { }
+        );
     }
 
     public WorkflowExecution start(UUID workflowId, String idempotencyKey) {
@@ -49,7 +80,22 @@ public final class WorkflowExecutionService {
         if (limit < 1 || limit > 1_000) {
             throw new IllegalArgumentException("dispatch limit must be between 1 and 1000");
         }
-        var workItems = repository.claimReadyTasks(limit, clock.instant());
+        Instant now = clock.instant();
+        ReadyQueueSnapshot queue = repository.readyQueue(now, limit);
+        if (queue == null) queue = ReadyQueueSnapshot.unknown(limit);
+        backpressureObserver.readyQueueObserved(queue.depth(), queue.oldestAge());
+        int requested = (int) Math.min(limit, queue.depth());
+        if (requested == 0) return 0;
+        TokenBucketDecision decision = rateLimiter.consume(
+                "task-dispatch", dispatchRateLimit, requested, now
+        );
+        if (decision.throttled(requested)) {
+            backpressureObserver.taskDispatchThrottled(
+                    requested, decision.granted(), decision.retryAfter()
+            );
+        }
+        if (decision.granted() == 0) return 0;
+        var workItems = repository.claimReadyTasks(decision.granted(), now);
         workItems.forEach(this::dispatch);
         return workItems.size();
     }

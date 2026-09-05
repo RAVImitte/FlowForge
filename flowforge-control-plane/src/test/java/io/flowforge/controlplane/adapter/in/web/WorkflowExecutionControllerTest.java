@@ -2,6 +2,7 @@ package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.ConcurrencyLimitExceededException;
+import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
 import io.flowforge.domain.execution.WorkflowExecution;
@@ -13,6 +14,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
@@ -82,9 +84,23 @@ class WorkflowExecutionControllerTest {
         mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
                         .header("Idempotency-Key", "order-43"))
                 .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "1"))
                 .andExpect(jsonPath("$.code").value("WORKFLOW_CONCURRENCY_LIMIT_EXCEEDED"))
                 .andExpect(jsonPath("$.workflowId").value(WORKFLOW_ID.toString()))
                 .andExpect(jsonPath("$.limit").value(3));
+    }
+
+    @Test
+    void reportsReadyQueueSaturationWithRetryGuidance() throws Exception {
+        when(repository.start(WORKFLOW_ID, "order-44", NOW))
+                .thenThrow(new AdmissionOverloadedException(WORKFLOW_ID, 25, Duration.ofMillis(1500)));
+
+        mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
+                        .header("Idempotency-Key", "order-44"))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(header().string("Retry-After", "2"))
+                .andExpect(jsonPath("$.code").value("WORKFLOW_READY_QUEUE_SATURATED"))
+                .andExpect(jsonPath("$.retryAfterSeconds").value(2));
     }
 
     @Test
