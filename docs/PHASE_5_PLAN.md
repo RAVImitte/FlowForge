@@ -135,11 +135,9 @@ Implemented checkpoint:
 - Verified fractional refill, concurrent capacity enforcement, Redis key reconstruction, pending-queue bounds, ready-queue rejection, scheduler replica safety, and HTTP retry guidance.
 - Verified the complete Maven reactor: 173 tests across 54 suites, with no failures, errors, or skipped tests.
 
-Next: **Slice 5.6 - Rebalancing, resilience, and operations**
-
 ### Slice 5.6: Rebalancing, resilience, and operations
 
-Status: **NEXT**
+Status: **COMPLETED**
 
 - Verify scheduler, control-plane, worker, PostgreSQL, Kafka, and Redis restart combinations.
 - Test graceful consumer rebalancing while permits and scheduled fires are in flight.
@@ -147,6 +145,19 @@ Status: **NEXT**
 - Record final Phase 5 architecture in ADR-005.
 
 Exit: the complete Maven suite passes with PostgreSQL, Kafka, and Redis Testcontainers and no infrastructure skips in the verified environment.
+
+Implemented checkpoint:
+
+- Configured cooperative sticky Kafka assignment for worker and control-plane consumers and explicit graceful-shutdown budgets.
+- Verified a worker-group join while a command handler was in flight: the original owner committed and acknowledged exactly once before balanced partition ownership converged.
+- Extended the multi-process restart test from a deliberately abandoned schedule claim through replacement scheduling, transactional outbox delivery, worker replacement, offline result publication, and replacement result consumption.
+- Verified workflow and task permits remain PostgreSQL-authoritative and are reconstructed in Redis after complete key loss while the scheduled execution remains active.
+- Verified deterministic schedule execution identity, trigger fencing, durable inbox/outbox deduplication, and final permit release across the restart sequence.
+- Added the Phase 5 scheduling, misfire, Redis recovery, concurrency, overload, rebalance, and restart runbook.
+- Recorded the final durable scheduling and PostgreSQL-authoritative coordination design in ADR-005.
+- Verified the complete Maven reactor: 174 tests across 54 suites, with no failures, errors, or skipped tests.
+
+Phase 5 exit criteria are satisfied. Next: **Phase 6 - Observability and horizontal scalability**.
 
 ## Deliberately deferred
 

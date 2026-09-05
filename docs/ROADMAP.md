@@ -16,7 +16,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 | Phase 2 | COMPLETED | Workflow state machine, execution, and DAG resolution |
 | Phase 3 | COMPLETED | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | COMPLETED | Retries, timeouts, dead-letter queues, and failure recovery |
-| Phase 5 | IN PROGRESS | Durable scheduling, Redis coordination, and backpressure |
+| Phase 5 | COMPLETED | Durable scheduling, Redis coordination, and backpressure |
 | Phase 6 | PLANNED | Observability, scalability validation, and resilience testing |
 | Phase 7 | PLANNED | Security, delivery automation, and operational readiness |
 
@@ -224,11 +224,11 @@ Phase 4 exit criteria are satisfied. Durable schedules, Redis coordination, rate
 
 ## Phase 5: Scheduling and coordination
 
-Status: **IN PROGRESS**
+Status: **COMPLETED**
 
-Completed milestones: **Slices 5.1-5.5 - Durable scheduling through admission backpressure**
+Completed milestones: **Slices 5.1-5.6 - Durable scheduling through resilience and operations**
 
-Next milestone: **Slice 5.6 - Rebalancing, resilience, and operations**
+Next milestone: **Phase 6 planning - Observability and horizontal scalability**
 
 Detailed implementation plan: [Phase 5 plan](PHASE_5_PLAN.md)
 
@@ -263,16 +263,22 @@ Completed capabilities:
 - Hard pending-schedule and per-workflow ready-task queue bounds across replicas
 - Retryable HTTP 429 overload responses with `Retry-After` guidance
 - Saturation, throttling, queue-depth, queue-age, retry-after, and rejected-admission metrics
+- Cooperative sticky Kafka partition rebalancing with explicit graceful-shutdown budgets
+- Multi-process recovery from abandoned schedule claims through control-plane and worker replacement
+- Redis permit reconstruction during an active scheduled execution without moving correctness out of PostgreSQL
+- Phase 5 operations runbook and ADR-005 architecture record
 - Domain, cron-calculation, HTTP, and PostgreSQL persistence tests
 
 Verification notes:
 
-- The complete Maven reactor succeeds across 54 suites with 173 tests passing and no failures, errors, or skipped tests.
+- The complete Maven reactor succeeds across 54 suites with 174 tests passing and no failures, errors, or skipped tests.
 - Rancher Desktop-backed PostgreSQL tests verify schedule round trips, lifecycle mutations, unpublished-workflow rejection, and stale-version fencing.
 - Rancher Desktop-backed PostgreSQL tests verify disjoint competing-scheduler batches, deterministic execution identity, expired-lease takeover, and stale-token fencing.
 - Rancher Desktop-backed PostgreSQL and Redis tests verify concurrent capacity enforcement, permit ownership, expiry, key TTLs, full Redis key loss, and state reconstruction.
 - Rancher Desktop-backed tests verify concurrent workflow admission, task saturation deferral, retry/timeout/orphan release, expired-token replacement, and Redis reconstruction from active execution state.
 - Rancher Desktop-backed tests verify atomic fractional token refill, concurrent consumption without oversubscription, Redis rate-key reconstruction, pending/ready queue bounds, and retryable overload responses.
+- Rancher Desktop-backed multi-process tests verify abandoned schedule takeover, permit reconstruction after total Redis key loss, control-plane and worker replacement, offline result recovery, and exactly one durable execution.
+- Rancher Desktop-backed Kafka tests verify a group rebalance during an in-flight command preserves exactly one durable completion and converges to disjoint partition ownership.
 - Redis remains outside the correctness boundary; PostgreSQL state and resource locks prevent oversubscription even when an ephemeral permit expires or disappears.
 
 Planned scope:

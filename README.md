@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable scheduling, Redis-assisted coordination, concurrency enforcement, rate limiting, and admission backpressure are complete; resilience and operations are next.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is complete: durable scheduling, Redis-assisted coordination, concurrency enforcement, rate limiting, admission backpressure, and restart resilience are verified across the distributed execution path.
 
 ## Current capabilities
 
@@ -72,8 +72,11 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Delay schedule fires and task claims when rate capacity is exhausted without losing durable work
 - Return HTTP 429 overload responses with explicit `Retry-After` guidance
 - Expose saturation, throttling, queue-depth, queue-age, and rejected-admission metrics
+- Rebalance Kafka consumers cooperatively while allowing bounded in-flight handlers to finish during graceful shutdown
+- Recover an abandoned schedule through control-plane and worker replacement while reconstructing active permit mirrors after total Redis key loss
+- Operate scheduling and coordination through a dedicated runbook and an accepted architecture decision record
 
-Phase 4 is complete. Phase 5 Slices 5.1-5.5 are verified across PostgreSQL, Kafka, and Redis. Slice 5.6 completes rebalancing, resilience, and operational documentation.
+Phases 1-5 are complete. Phase 6 adds distributed tracing, dashboards, alerting, and measured horizontal-capacity validation.
 
 ## Prerequisites
 
@@ -114,6 +117,8 @@ Run all tests:
 
 Infrastructure integration tests use PostgreSQL, Kafka, and Redis Testcontainers. They are skipped when a Docker-compatible runtime is unavailable; all other tests still run.
 
+Operational procedures are in the [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md) and [Phase 5 scheduling and coordination runbook](docs/operations/phase-5-scheduling-coordination-runbook.md). The final Phase 5 design is recorded in [ADR-005](docs/adr/005-phase-5-scheduling-and-coordination.md).
+
 ## Configuration
 
 | Environment variable | Default |
@@ -122,6 +127,7 @@ Infrastructure integration tests use PostgreSQL, Kafka, and Redis Testcontainers
 | `FLOWFORGE_DB_USERNAME` | `flowforge` |
 | `FLOWFORGE_DB_PASSWORD` | `flowforge` |
 | `FLOWFORGE_DB_POOL_SIZE` | `10` |
+| `FLOWFORGE_SHUTDOWN_TIMEOUT` | Control plane: `30s`; worker: `70s` |
 | `FLOWFORGE_REDIS_HOST` | `localhost` |
 | `FLOWFORGE_REDIS_PORT` | `6379` |
 | `FLOWFORGE_REDIS_PASSWORD` | Empty |

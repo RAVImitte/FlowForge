@@ -11,6 +11,7 @@ import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -45,9 +46,14 @@ class WorkerCoordinationIntegrationTest {
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:17.6-alpine");
 
+    @BeforeAll
+    static void prepareTopics() throws Exception {
+        createTopics();
+    }
+
     @Test
     void twoWorkersSharePartitionsAndProcessOnlyTheirAssignments() throws Exception {
-        createTopics();
+        String taskPrefix = "BALANCE_" + UUID.randomUUID().toString().replace("-", "");
         try (ConfigurableApplicationContext workerA = startWorker("worker-a");
              ConfigurableApplicationContext workerB = startWorker("worker-b")) {
             AssignmentPair assignments = awaitBalancedAssignments(workerA, workerB, Duration.ofSeconds(20));
@@ -62,17 +68,63 @@ class WorkerCoordinationIntegrationTest {
             assertThat(allAssignments).hasSize(PARTITION_COUNT);
 
             ObjectMapper objectMapper = workerA.getBean(ObjectMapper.class);
-            sendOneCommandPerPartition(objectMapper);
+            sendOneCommandPerPartition(objectMapper, taskPrefix);
 
             JdbcClient jdbc = workerA.getBean(JdbcClient.class);
-            awaitCompleted(jdbc, PARTITION_COUNT, Duration.ofSeconds(20));
+            awaitCompleted(jdbc, taskPrefix, PARTITION_COUNT, Duration.ofSeconds(20));
             List<String> workers = jdbc.sql("""
                     SELECT DISTINCT completed_by
                       FROM worker_command_inbox
-                     WHERE status = 'COMPLETED'
+                     WHERE status = 'COMPLETED' AND task_key LIKE :taskPrefix
                      ORDER BY completed_by
-                    """).query(String.class).list();
+                    """)
+                    .param("taskPrefix", taskPrefix + "%")
+                    .query(String.class)
+                    .list();
             assertThat(workers).containsExactly("worker-a", "worker-b");
+        }
+    }
+
+    @Test
+    void completesAnInFlightCommandExactlyOnceWhileASecondWorkerJoinsTheGroup() throws Exception {
+        UUID eventId = UUID.randomUUID();
+        String taskKey = "REBALANCE_" + eventId.toString().replace("-", "");
+        try (ConfigurableApplicationContext workerA = startWorker("rebalance-worker-a")) {
+            KafkaListenerEndpointRegistry registryA = workerA.getBean(KafkaListenerEndpointRegistry.class);
+            Set<TopicPartition> initialAssignments = awaitAssignments(
+                    registryA, PARTITION_COUNT, Duration.ofSeconds(20)
+            );
+            int partition = initialAssignments.iterator().next().partition();
+            sendCommand(
+                    workerA.getBean(ObjectMapper.class),
+                    eventId,
+                    taskKey,
+                    "DELAY",
+                    Map.of("durationMs", 2_000),
+                    partition
+            );
+
+            JdbcClient jdbc = workerA.getBean(JdbcClient.class);
+            awaitStatus(jdbc, eventId, "RECEIVED", Duration.ofSeconds(10));
+
+            try (ConfigurableApplicationContext workerB = startWorker("rebalance-worker-b")) {
+                AssignmentPair assignments = awaitBalancedAssignments(workerA, workerB, Duration.ofSeconds(20));
+                assertThat(assignments.workerA()).doesNotContainAnyElementsOf(assignments.workerB());
+                awaitStatus(jdbc, eventId, "COMPLETED", Duration.ofSeconds(20));
+
+                assertThat(jdbc.sql("""
+                        SELECT completed_by FROM worker_command_inbox WHERE event_id = :eventId
+                        """)
+                        .param("eventId", eventId)
+                        .query(String.class)
+                        .single()).isEqualTo("rebalance-worker-a");
+                assertThat(jdbc.sql("""
+                        SELECT COUNT(*) FROM worker_result_outbox WHERE command_event_id = :eventId
+                        """)
+                        .param("eventId", eventId)
+                        .query(Long.class)
+                        .single()).isEqualTo(1);
+            }
         }
     }
 
@@ -129,6 +181,21 @@ class WorkerCoordinationIntegrationTest {
                 .collect(java.util.stream.Collectors.toSet());
     }
 
+    private static Set<TopicPartition> awaitAssignments(
+            KafkaListenerEndpointRegistry registry,
+            int expected,
+            Duration timeout
+    ) throws InterruptedException {
+        Instant deadline = Instant.now().plus(timeout);
+        Set<TopicPartition> current = Set.of();
+        while (Instant.now().isBefore(deadline)) {
+            current = assignments(registry);
+            if (current.size() == expected) return current;
+            Thread.sleep(100);
+        }
+        throw new AssertionError("Worker did not receive " + expected + " partitions: " + current);
+    }
+
     private static void createTopics() throws Exception {
         Map<String, Object> properties = Map.of(
                 AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers()
@@ -141,35 +208,52 @@ class WorkerCoordinationIntegrationTest {
         }
     }
 
-    private static void sendOneCommandPerPartition(ObjectMapper objectMapper) throws Exception {
+    private static void sendOneCommandPerPartition(ObjectMapper objectMapper, String taskPrefix) throws Exception {
         try (KafkaProducer<String, String> producer = producer()) {
             for (int partition = 0; partition < PARTITION_COUNT; partition++) {
-                UUID workflowId = UUID.randomUUID();
-                UUID taskId = UUID.randomUUID();
-                MessageEnvelope<TaskCommandV1> command = new MessageEnvelope<>(
-                        UUID.randomUUID(),
-                        TaskCommandV1.EVENT_TYPE,
-                        TaskCommandV1.SCHEMA_VERSION,
-                        Instant.now(),
-                        workflowId,
-                        new TaskCommandV1(
-                                workflowId,
-                                taskId,
-                                "TASK_" + partition,
-                                "NOOP",
-                                Map.of(),
-                                1,
-                                1
-                        )
-                );
-                producer.send(new ProducerRecord<>(
-                        FlowForgeTopics.TASK_COMMANDS_V1,
-                        partition,
-                        taskId.toString(),
-                        objectMapper.writeValueAsString(command)
-                )).get(10, TimeUnit.SECONDS);
+                sendCommand(producer, objectMapper, UUID.randomUUID(), taskPrefix + partition, "NOOP", Map.of(), partition);
             }
         }
+    }
+
+    private static void sendCommand(
+            ObjectMapper objectMapper,
+            UUID eventId,
+            String taskKey,
+            String taskType,
+            Map<String, Object> configuration,
+            int partition
+    ) throws Exception {
+        try (KafkaProducer<String, String> producer = producer()) {
+            sendCommand(producer, objectMapper, eventId, taskKey, taskType, configuration, partition);
+        }
+    }
+
+    private static void sendCommand(
+            KafkaProducer<String, String> producer,
+            ObjectMapper objectMapper,
+            UUID eventId,
+            String taskKey,
+            String taskType,
+            Map<String, Object> configuration,
+            int partition
+    ) throws Exception {
+        UUID workflowId = UUID.randomUUID();
+        UUID taskId = UUID.randomUUID();
+        MessageEnvelope<TaskCommandV1> command = new MessageEnvelope<>(
+                eventId,
+                TaskCommandV1.EVENT_TYPE,
+                TaskCommandV1.SCHEMA_VERSION,
+                Instant.now(),
+                workflowId,
+                new TaskCommandV1(workflowId, taskId, taskKey, taskType, configuration, 1, 1)
+        );
+        producer.send(new ProducerRecord<>(
+                FlowForgeTopics.TASK_COMMANDS_V1,
+                partition,
+                taskId.toString(),
+                objectMapper.writeValueAsString(command)
+        )).get(10, TimeUnit.SECONDS);
     }
 
     private static KafkaProducer<String, String> producer() {
@@ -181,16 +265,45 @@ class WorkerCoordinationIntegrationTest {
         return new KafkaProducer<>(properties);
     }
 
-    private static void awaitCompleted(JdbcClient jdbc, long expected, Duration timeout) throws InterruptedException {
+    private static void awaitCompleted(
+            JdbcClient jdbc,
+            String taskPrefix,
+            long expected,
+            Duration timeout
+    ) throws InterruptedException {
         Instant deadline = Instant.now().plus(timeout);
         while (Instant.now().isBefore(deadline)) {
             long completed = jdbc.sql("""
-                    SELECT COUNT(*) FROM worker_command_inbox WHERE status = 'COMPLETED'
-                    """).query(Long.class).single();
+                    SELECT COUNT(*) FROM worker_command_inbox
+                     WHERE status = 'COMPLETED' AND task_key LIKE :taskPrefix
+                    """)
+                    .param("taskPrefix", taskPrefix + "%")
+                    .query(Long.class)
+                    .single();
             if (completed == expected) return;
             Thread.sleep(100);
         }
         throw new AssertionError("Workers did not complete all partitioned commands before timeout");
+    }
+
+    private static void awaitStatus(
+            JdbcClient jdbc,
+            UUID eventId,
+            String expected,
+            Duration timeout
+    ) throws InterruptedException {
+        Instant deadline = Instant.now().plus(timeout);
+        while (Instant.now().isBefore(deadline)) {
+            List<String> statuses = jdbc.sql("""
+                    SELECT status FROM worker_command_inbox WHERE event_id = :eventId
+                    """)
+                    .param("eventId", eventId)
+                    .query(String.class)
+                    .list();
+            if (statuses.size() == 1 && statuses.getFirst().equals(expected)) return;
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Command " + eventId + " did not reach " + expected + " before timeout");
     }
 
     private record AssignmentPair(Set<TopicPartition> workerA, Set<TopicPartition> workerB) {
