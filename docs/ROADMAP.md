@@ -16,7 +16,7 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 | Phase 2 | COMPLETED | Workflow state machine, execution, and DAG resolution |
 | Phase 3 | COMPLETED | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | COMPLETED | Retries, timeouts, dead-letter queues, and failure recovery |
-| Phase 5 | PLANNED | Durable scheduling, Redis coordination, and backpressure |
+| Phase 5 | IN PROGRESS | Durable scheduling, Redis coordination, and backpressure |
 | Phase 6 | PLANNED | Observability, scalability validation, and resilience testing |
 | Phase 7 | PLANNED | Security, delivery automation, and operational readiness |
 
@@ -224,7 +224,29 @@ Phase 4 exit criteria are satisfied. Durable schedules, Redis coordination, rate
 
 ## Phase 5: Scheduling and coordination
 
-Status: **PLANNED**
+Status: **IN PROGRESS**
+
+Completed milestone: **Slice 5.1 - Durable schedule-definition foundation**
+
+Next milestone: **Slice 5.2 - Due-fire materialization and misfire recovery**
+
+Detailed implementation plan: [Phase 5 plan](PHASE_5_PLAN.md)
+
+Completed capabilities:
+
+- Framework-free one-time and cron schedule specifications
+- Explicit IANA time-zone and catch-up-once or skip misfire semantics
+- Flyway-managed durable schedule definitions and trigger-history foundation
+- Create, inspect, list, update, pause, resume, and soft-delete schedule APIs
+- Active-workflow and published-version validation
+- Strong ETag and `If-Match` optimistic concurrency for schedule mutations
+- Domain, cron-calculation, HTTP, and PostgreSQL persistence tests
+
+Verification notes:
+
+- The complete Maven reactor succeeds across 48 suites with 137 tests passing and no failures, errors, or skipped tests.
+- Rancher Desktop-backed PostgreSQL tests verify schedule round trips, lifecycle mutations, unpublished-workflow rejection, and stale-version fencing.
+- Schedule definitions are durable, but due-fire execution is deliberately deferred to Slice 5.2.
 
 Planned scope:
 

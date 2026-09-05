@@ -128,6 +128,21 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public boolean hasPublishedVersion(UUID id) {
+        return jdbc.sql("""
+                SELECT EXISTS (
+                    SELECT 1
+                      FROM workflow_definition w
+                      JOIN workflow_version v ON v.workflow_id = w.id
+                     WHERE w.id = :id
+                       AND w.lifecycle_status = 'ACTIVE'
+                       AND v.version_status = 'PUBLISHED'
+                )
+                """).param("id", id).query(Boolean.class).single();
+    }
+
+    @Override
     @Transactional
     public WorkflowDefinition update(UUID id, long expectedLockVersion, WorkflowDraft draft) {
         lockAndCheck(id, expectedLockVersion);

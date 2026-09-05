@@ -1,0 +1,113 @@
+# Phase 5 plan: durable scheduling, coordination, and backpressure
+
+## Objective
+
+Add one-time and recurring workflow schedules, horizontally safe trigger materialization, Redis-assisted coordination, concurrency limits, and admission control without moving correctness out of PostgreSQL.
+
+Redis is an optimization and short-lived coordination layer. A Redis restart may reduce throughput temporarily, but it must never lose a schedule, create an unbounded duplicate execution, or make durable workflow state unrecoverable.
+
+## Correctness invariants
+
+- PostgreSQL is authoritative for schedule definitions, next-fire timestamps, trigger history, execution idempotency, and durable concurrency state.
+- Every schedule fire has a deterministic idempotency key derived from schedule ID and scheduled fire time.
+- Claiming a due schedule and recording its trigger decision use bounded database transactions and token-fenced leases.
+- Recurring schedules persist their next fire time; replacement processes do not infer missed history from wall-clock scans alone.
+- Time zones are explicit IANA zone IDs and daylight-saving transitions have deterministic behavior.
+- Misfire behavior is explicit: catch up once or skip to the next future occurrence. FlowForge never creates an unbounded catch-up storm.
+- Multiple scheduler replicas may run simultaneously and must claim disjoint due work.
+- Redis permits and rate-limit keys are leased, token-owned, and reconstructable from PostgreSQL state.
+- Admission control rejects or delays work before queues and connection pools become unbounded.
+- Schedule pause, resume, update, and deletion use optimistic concurrency.
+
+## Incremental implementation
+
+### Slice 5.1: Durable schedule-definition foundation
+
+Status: **COMPLETED**
+
+- Add framework-free one-time and cron schedule specifications with time-zone and misfire-policy semantics.
+- Add Flyway-managed schedule-definition and trigger-history tables.
+- Add create, inspect, list, pause, resume, update, and delete application ports and HTTP APIs.
+- Validate that schedules target active workflows with a published version.
+- Use strong ETags for schedule mutations and add domain, API, migration, and PostgreSQL persistence tests.
+
+Exit: valid schedule definitions round-trip durably, invalid expressions/timestamps/zones are rejected, mutations are concurrency-safe, and creating a schedule does not yet start an execution.
+
+Implemented checkpoint:
+
+- Added framework-free one-time and cron schedule models with explicit IANA time zones and misfire policies.
+- Added durable PostgreSQL schedule definitions and trigger-history foundations through Flyway migration V7.
+- Added create, inspect, list, update, pause, resume, and soft-delete APIs with strong ETag concurrency control.
+- Restricted schedules to active workflows that have a published version.
+- Verified schedule domain rules, cron calculation, HTTP behavior, PostgreSQL round trips, lifecycle changes, and stale-version rejection.
+- Verified the complete Maven reactor: 137 tests across 48 suites, with no failures, errors, or skipped tests.
+
+### Slice 5.2: Due-fire materialization and misfire recovery
+
+Status: **NEXT**
+
+- Compute and persist next fire times for one-time and recurring schedules.
+- Claim due schedules with bounded `FOR UPDATE SKIP LOCKED` batches and fenced leases.
+- Persist each fire in trigger history and start its workflow with a deterministic idempotency key.
+- Implement catch-up-once and skip misfire policies with bounded recovery.
+- Add restart, clock-boundary, daylight-saving, and competing-scheduler tests.
+
+Exit: scheduler replicas materialize each logical fire once at the workflow-state boundary and recover safely after downtime.
+
+### Slice 5.3: Redis coordination foundation
+
+Status: **PLANNED**
+
+- Add Redis to the local environment and health/metrics configuration.
+- Implement token-owned leased permits and atomic Lua acquire/renew/release operations.
+- Namespace keys by environment and resource; attach bounded TTLs to every coordination key.
+- Reconcile Redis state from PostgreSQL after key eviction, restart, or failover.
+- Add Redis Testcontainers and failure-injection tests.
+
+Exit: Redis improves coordination latency but its total loss cannot violate durable execution or schedule correctness.
+
+### Slice 5.4: Workflow and task concurrency limits
+
+Status: **PLANNED**
+
+- Add versioned per-workflow and per-task concurrency policies.
+- Acquire permits before dispatch and release them on every terminal, timeout, and orphan-recovery path.
+- Use PostgreSQL state as the reconciliation source for leaked or missing Redis permits.
+- Prevent permit oversubscription across control-plane and worker replicas.
+
+Exit: configured limits hold under concurrent dispatch, crashes, retries, and Redis recovery.
+
+### Slice 5.5: Rate limiting and admission backpressure
+
+Status: **PLANNED**
+
+- Add atomic token-bucket rate limiting for schedule fires and task dispatch.
+- Bound pending scheduled work and per-workflow ready queues.
+- Return explicit overload responses with retry guidance at API admission points.
+- Expose saturation, throttling, queue-age, and rejected-admission metrics.
+
+Exit: overload is visible and bounded; the platform sheds or delays work according to policy instead of exhausting resources.
+
+### Slice 5.6: Rebalancing, resilience, and operations
+
+Status: **PLANNED**
+
+- Verify scheduler, control-plane, worker, PostgreSQL, Kafka, and Redis restart combinations.
+- Test graceful consumer rebalancing while permits and scheduled fires are in flight.
+- Add scheduling, misfire, Redis-recovery, concurrency, and overload runbooks.
+- Record final Phase 5 architecture in ADR-005.
+
+Exit: the complete Maven suite passes with PostgreSQL, Kafka, and Redis Testcontainers and no infrastructure skips in the verified environment.
+
+## Deliberately deferred
+
+- OpenTelemetry traces, dashboards, capacity/load models, and soak testing remain Phase 6.
+- Authentication, tenant quotas, deployment manifests, and delivery automation remain Phase 7.
+
+## Test strategy
+
+- Domain tests for schedule forms, time zones, misfire policies, and DST boundaries.
+- PostgreSQL tests for optimistic mutation, deterministic fire identity, disjoint claims, and restart recovery.
+- Redis tests for atomic permits, fencing, expiry, reconstruction, and fail-open/fail-closed decisions.
+- End-to-end tests for scheduled Kafka execution, concurrency limits, retry/timeout permit release, and overload behavior.
+- Multi-process tests that stop and replace scheduler/control-plane/worker replicas at transaction boundaries.

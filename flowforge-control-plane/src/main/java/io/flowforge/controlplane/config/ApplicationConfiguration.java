@@ -3,6 +3,9 @@ package io.flowforge.controlplane.config;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
+import io.flowforge.application.schedule.ScheduleCalculator;
+import io.flowforge.application.schedule.ScheduleRepository;
+import io.flowforge.application.schedule.WorkflowScheduleService;
 import io.flowforge.application.workflow.WorkflowRepository;
 import io.flowforge.application.workflow.WorkflowService;
 import org.slf4j.Logger;
@@ -23,6 +26,16 @@ public class ApplicationConfiguration {
     @Bean
     WorkflowService workflowService(WorkflowRepository repository) {
         return new WorkflowService(repository);
+    }
+
+    @Bean
+    WorkflowScheduleService workflowScheduleService(
+            ScheduleRepository schedules,
+            WorkflowRepository workflows,
+            ScheduleCalculator calculator,
+            Clock clock
+    ) {
+        return new WorkflowScheduleService(schedules, workflows, calculator, clock);
     }
 
     @Bean

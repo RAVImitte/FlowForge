@@ -3,6 +3,8 @@ package io.flowforge.controlplane.adapter.in.web;
 import io.flowforge.application.execution.ExecutionConflictException;
 import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
+import io.flowforge.application.schedule.ScheduleConflictException;
+import io.flowforge.application.schedule.ScheduleNotFoundException;
 import io.flowforge.application.workflow.WorkflowConflictException;
 import io.flowforge.application.workflow.WorkflowNotFoundException;
 import io.flowforge.domain.workflow.DomainValidationException;
@@ -19,6 +21,22 @@ import java.util.List;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(ScheduleNotFoundException.class)
+    ResponseEntity<ProblemDetail> scheduleNotFound(
+            ScheduleNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.NOT_FOUND, "SCHEDULE_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ScheduleConflictException.class)
+    ResponseEntity<ProblemDetail> scheduleConflict(
+            ScheduleConflictException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.CONFLICT, "SCHEDULE_CONFLICT", exception.getMessage(), request);
+    }
+
     @ExceptionHandler(ExecutionNotFoundException.class)
     ResponseEntity<ProblemDetail> executionNotFound(
             ExecutionNotFoundException exception,

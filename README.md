@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 4 adds durable retries, deadlines, worker fencing, failure recovery, and poison-message isolation to the Kafka-based execution engine.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phase 5 is underway: durable one-time and cron schedule definitions are complete, while horizontally safe due-fire materialization is the next slice.
 
 ## Current capabilities
 
@@ -47,8 +47,12 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Route exhausted poison records to separate versioned DLQ topics without losing raw payloads or correlation metadata
 - Require broker acknowledgement of each DLQ publication before recovering the source offset
 - Emit durable `TASK_DEAD_LETTERED` events when task retries are exhausted
+- Define one-time and recurring cron schedules with explicit IANA time zones and misfire policies
+- Persist schedule definitions and trigger-history foundations in PostgreSQL
+- Create, inspect, list, update, pause, resume, and soft-delete schedules through versioned HTTP APIs
+- Fence concurrent schedule mutations with strong ETags and `If-Match`
 
-Phase 4 is complete. Its recovery architecture is verified across process restarts, stale and duplicate delivery, infrastructure publication failures, worker loss, and competing scheduler/reaper replicas. Redis coordination remains deliberately deferred to Phase 5.
+Phase 4 is complete. Phase 5 Slice 5.1 is verified with durable schedule definitions; Slice 5.2 will materialize due fires and recover misfires across competing scheduler replicas. Redis coordination follows in Slice 5.3.
 
 ## Prerequisites
 
@@ -172,6 +176,13 @@ Infrastructure integration tests use PostgreSQL and Kafka Testcontainers. They a
 | `POST` | `/api/v1/workflows/{id}/executions` | Start an idempotent execution of the latest published version |
 | `GET` | `/api/v1/executions/{id}` | Inspect workflow state, tasks, attempts, and events |
 | `POST` | `/api/v1/executions/{id}/cancel` | Request cancellation |
+| `POST` | `/api/v1/schedules` | Create a one-time or cron schedule |
+| `GET` | `/api/v1/schedules` | List schedules with optional workflow and status filters |
+| `GET` | `/api/v1/schedules/{id}` | Inspect a schedule definition and its next fire time |
+| `PUT` | `/api/v1/schedules/{id}` | Update a schedule using `If-Match` |
+| `POST` | `/api/v1/schedules/{id}/pause` | Pause a schedule using `If-Match` |
+| `POST` | `/api/v1/schedules/{id}/resume` | Resume a schedule using `If-Match` |
+| `DELETE` | `/api/v1/schedules/{id}` | Soft-delete a schedule using `If-Match` |
 | `GET` | `/actuator/health` | Health and availability probes |
 
 Mutating an existing workflow requires the strong ETag returned by create/read/update:
@@ -217,11 +228,11 @@ Example request:
 
 ## Architecture
 
-- `flowforge-domain`: pure Java definition invariants, execution state machines, and DAG policy
-- `flowforge-application`: use cases and outbound repository port
+- `flowforge-domain`: pure Java definition invariants, execution state machines, DAG policy, and schedule models
+- `flowforge-application`: workflow, execution, and scheduling use cases with outbound repository ports
 - `flowforge-messaging`: versioned commands, results, events, and shared topic names
 - `flowforge-kafka-support`: shared bounded-retry, broker-confirmed DLQ publication, metadata, and recovery metrics
 - `flowforge-control-plane`: Spring Boot HTTP, PostgreSQL, transactional-outbox, and Kafka adapters
 - `flowforge-worker`: independently deployable Spring Boot worker process
 
-See the [project roadmap](docs/ROADMAP.md), [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md), [ADR-001](docs/adr/001-phase-1-architecture.md), [ADR-002](docs/adr/002-phase-2-execution-architecture.md), [ADR-003](docs/adr/003-phase-3-distributed-execution.md), and [ADR-004](docs/adr/004-phase-4-reliability-and-recovery.md) for phase status, operations, and major design decisions.
+See the [project roadmap](docs/ROADMAP.md), [Phase 5 implementation plan](docs/PHASE_5_PLAN.md), [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md), [ADR-001](docs/adr/001-phase-1-architecture.md), [ADR-002](docs/adr/002-phase-2-execution-architecture.md), [ADR-003](docs/adr/003-phase-3-distributed-execution.md), and [ADR-004](docs/adr/004-phase-4-reliability-and-recovery.md) for phase status, operations, and major design decisions.

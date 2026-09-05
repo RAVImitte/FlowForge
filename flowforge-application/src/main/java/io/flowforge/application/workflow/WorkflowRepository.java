@@ -13,6 +13,8 @@ public interface WorkflowRepository {
 
     PageResult<WorkflowDefinition> findAll(int page, int size);
 
+    boolean hasPublishedVersion(UUID id);
+
     WorkflowDefinition update(UUID id, long expectedLockVersion, WorkflowDraft draft);
 
     WorkflowDefinition publish(UUID id, long expectedLockVersion);
