@@ -1,6 +1,8 @@
 package io.flowforge.controlplane;
 
 import io.flowforge.application.execution.ExecutionRepository;
+import io.flowforge.application.execution.DurableTaskQueue;
+import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.ConcurrencyPermitRecovery;
@@ -10,12 +12,14 @@ import io.flowforge.application.execution.TaskResult;
 import io.flowforge.application.execution.TaskWorkItem;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.application.workflow.WorkflowService;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.execution.ExecutionEventType;
 import io.flowforge.domain.execution.TaskAttemptStatus;
 import io.flowforge.domain.execution.TaskRunStatus;
 import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRunStatus;
 import io.flowforge.domain.workflow.TaskDefinition;
+import io.flowforge.domain.workflow.SecretReference;
 import io.flowforge.domain.workflow.TaskDependency;
 import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.domain.workflow.WorkflowDefinition;
@@ -25,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -72,6 +77,9 @@ class WorkflowExecutionPersistenceIntegrationTest {
     ExecutionRepository executionRepository;
 
     @Autowired
+    DurableTaskQueue durableTaskQueue;
+
+    @Autowired
     ConcurrencyPermitRecovery concurrencyPermitRecovery;
 
     @Autowired
@@ -86,13 +94,111 @@ class WorkflowExecutionPersistenceIntegrationTest {
     }
 
     @Test
+    void isolatesExecutionAdmissionIdempotencyReadsAndCancellationByTenant() {
+        TenantId tenantA = registerTenant("merchant-a", "Merchant A");
+        TenantId tenantB = registerTenant("merchant-b", "Merchant B");
+        WorkflowDefinition workflowA = publish(tenantA, workflow(List.of(task("ROOT")), List.of()));
+        WorkflowDefinition workflowB = publish(tenantB, workflow(List.of(task("ROOT")), List.of()));
+
+        WorkflowExecution executionA = executionRepository.start(
+                tenantA, workflowA.id(), "same-request", TIME
+        );
+        WorkflowExecution replayA = executionRepository.start(
+                tenantA, workflowA.id(), "same-request", TIME.plusSeconds(1)
+        );
+        WorkflowExecution executionB = executionRepository.start(
+                tenantB, workflowB.id(), "same-request", TIME
+        );
+
+        assertThat(replayA.workflow().id()).isEqualTo(executionA.workflow().id());
+        assertThat(executionA.tenantId()).isEqualTo(tenantA);
+        assertThat(executionB.tenantId()).isEqualTo(tenantB);
+        assertThat(executionRepository.findById(tenantB, executionA.workflow().id())).isEmpty();
+        assertThatThrownBy(() -> executionRepository.cancel(
+                tenantB, executionA.workflow().id(), TIME.plusSeconds(2)
+        )).isInstanceOf(ExecutionNotFoundException.class);
+        assertThatThrownBy(() -> executionRepository.start(
+                tenantB, workflowA.id(), "foreign-workflow", TIME.plusSeconds(2)
+        )).isInstanceOf(WorkflowNotPublishedException.class);
+        assertThat(executionRepository.findById(tenantA, executionA.workflow().id()))
+                .get()
+                .extracting(WorkflowExecution::tenantId)
+                .isEqualTo(tenantA);
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM execution_event
+                 WHERE tenant_id = :tenantId
+                   AND workflow_execution_id = :executionId
+                """)
+                .param("tenantId", tenantA.value())
+                .param("executionId", executionA.workflow().id())
+                .query(Long.class)
+                .single()).isPositive();
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM control_plane_outbox
+                 WHERE tenant_id = :tenantId
+                   AND workflow_execution_id = :executionId
+                   AND payload ->> 'tenantId' = :tenantId
+                """)
+                .param("tenantId", tenantA.value())
+                .param("executionId", executionA.workflow().id())
+                .query(Long.class)
+                .single()).isPositive();
+
+        UUID workflowVersionId = jdbc.sql("""
+                SELECT id FROM workflow_version
+                 WHERE workflow_id = :workflowId AND version_status = 'PUBLISHED'
+                """)
+                .param("workflowId", workflowA.id())
+                .query(UUID.class)
+                .single();
+        assertThatThrownBy(() -> jdbc.sql("""
+                INSERT INTO workflow_execution(
+                    id, tenant_id, workflow_id, workflow_version_id, workflow_version_number,
+                    idempotency_key, status, state_version, created_at, started_at
+                ) VALUES (
+                    :id, :tenantId, :workflowId, :versionId, 1,
+                    'ownership-mismatch', 'RUNNING', 0, :now, :now
+                )
+                """)
+                .param("id", UUID.randomUUID())
+                .param("tenantId", tenantB.value())
+                .param("workflowId", workflowA.id())
+                .param("versionId", workflowVersionId)
+                .param("now", Timestamp.from(TIME))
+                .update())
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void carriesSecretReferencesIntoCommandsWithoutInlineMaterial() {
+        TaskDefinition task = new TaskDefinition(
+                "PAY", "Pay", "PAYMENT", Map.of("amount", 42),
+                Map.of("apiKey", new SecretReference("vault", "tenants/local/payment", "11")),
+                null, null
+        );
+        WorkflowDefinition published = publish(workflow(List.of(task), List.of()));
+        executionRepository.start(TenantId.LOCAL, published.id(), "secret-reference", TIME);
+
+        assertThat(durableTaskQueue.enqueueReadyTasks(TenantId.LOCAL, 1, TIME.plusSeconds(1))).isEqualTo(1);
+
+        String payload = jdbc.sql("""
+                SELECT payload::text FROM control_plane_outbox
+                 WHERE message_kind = 'TASK_COMMAND'
+                 ORDER BY created_at DESC LIMIT 1
+                """).query(String.class).single();
+        assertThat(payload)
+                .contains("secretReferences", "tenants/local/payment", "vault")
+                .doesNotContain("resolvedSecret", "secretValue");
+    }
+
+    @Test
     void rejectsAdmissionBeforeThePerWorkflowReadyQueueCanGrowUnbounded() {
         WorkflowDefinition published = publish(workflow(List.of(task("ROOT")), List.of()));
-        executionRepository.start(published.id(), "queue-limit-1", TIME);
-        executionRepository.start(published.id(), "queue-limit-2", TIME);
+        executionRepository.start(TenantId.LOCAL, published.id(), "queue-limit-1", TIME);
+        executionRepository.start(TenantId.LOCAL, published.id(), "queue-limit-2", TIME);
 
         assertThatThrownBy(() -> executionRepository.start(
-                published.id(), "queue-limit-3", TIME.plusSeconds(1)
+                TenantId.LOCAL, published.id(), "queue-limit-3", TIME.plusSeconds(1)
         )).isInstanceOf(AdmissionOverloadedException.class)
                 .satisfies(failure -> {
                     AdmissionOverloadedException overloaded = (AdmissionOverloadedException) failure;
@@ -120,10 +226,10 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 List.of(),
                 1
         ));
-        WorkflowExecution first = executionRepository.start(published.id(), "limited-1", TIME);
+        WorkflowExecution first = executionRepository.start(TenantId.LOCAL, published.id(), "limited-1", TIME);
 
         assertThatThrownBy(() -> executionRepository.start(
-                published.id(), "limited-2", TIME.plusSeconds(31)
+                TenantId.LOCAL, published.id(), "limited-2", TIME.plusSeconds(31)
         )).isInstanceOf(ConcurrencyLimitExceededException.class);
 
         TaskWorkItem task = onlyClaim(TIME.plusSeconds(32));
@@ -131,7 +237,8 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 TaskCompletion.from(task, TaskResult.succeeded()),
                 TIME.plusSeconds(33)
         );
-        WorkflowExecution second = executionRepository.start(published.id(), "limited-2", TIME.plusSeconds(34));
+        WorkflowExecution second = executionRepository.start(
+                TenantId.LOCAL, published.id(), "limited-2", TIME.plusSeconds(34));
 
         assertThat(second.workflow().id()).isNotEqualTo(first.workflow().id());
         assertThat(activeConcurrencyPermits("concurrency:workflow-version:%")).isEqualTo(1);
@@ -145,12 +252,14 @@ class WorkflowExecutionPersistenceIntegrationTest {
         WorkflowDefinition published = publish(new WorkflowDraft(
                 "Task limited workflow", null, List.of(limitedTask), List.of()
         ));
-        WorkflowExecution first = executionRepository.start(published.id(), "task-limit-1", TIME);
-        WorkflowExecution second = executionRepository.start(published.id(), "task-limit-2", TIME);
+        WorkflowExecution first = executionRepository.start(TenantId.LOCAL, published.id(), "task-limit-1", TIME);
+        WorkflowExecution second = executionRepository.start(TenantId.LOCAL, published.id(), "task-limit-2", TIME);
 
-        List<TaskWorkItem> firstBatch = executionRepository.claimReadyTasks(10, TIME.plusSeconds(1));
+        List<TaskWorkItem> firstBatch = executionRepository.claimReadyTasks(
+                TenantId.LOCAL, 10, TIME.plusSeconds(1));
         assertThat(firstBatch).hasSize(1);
         WorkflowExecution waiting = executionRepository.findById(
+                TenantId.LOCAL,
                 firstBatch.getFirst().workflowRunId().equals(first.workflow().id())
                         ? second.workflow().id()
                         : first.workflow().id()
@@ -164,7 +273,8 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 TaskCompletion.from(firstBatch.getFirst(), TaskResult.succeeded()),
                 TIME.plusSeconds(2)
         );
-        List<TaskWorkItem> secondBatch = executionRepository.claimReadyTasks(10, TIME.plusSeconds(3));
+        List<TaskWorkItem> secondBatch = executionRepository.claimReadyTasks(
+                TenantId.LOCAL, 10, TIME.plusSeconds(3));
 
         assertThat(secondBatch).hasSize(1);
         assertThat(secondBatch.getFirst().workflowRunId()).isEqualTo(waiting.workflow().id());
@@ -182,8 +292,8 @@ class WorkflowExecutionPersistenceIntegrationTest {
         WorkflowDefinition published = publish(new WorkflowDraft(
                 "Retry capacity", null, List.of(limitedTask), List.of()
         ));
-        executionRepository.start(published.id(), "retry-capacity-1", TIME);
-        executionRepository.start(published.id(), "retry-capacity-2", TIME);
+        executionRepository.start(TenantId.LOCAL, published.id(), "retry-capacity-1", TIME);
+        executionRepository.start(TenantId.LOCAL, published.id(), "retry-capacity-2", TIME);
         TaskWorkItem first = onlyClaim(TIME.plusSeconds(1));
 
         executionRepository.completeTask(
@@ -201,7 +311,8 @@ class WorkflowExecutionPersistenceIntegrationTest {
         WorkflowDefinition published = publish(new WorkflowDraft(
                 "Recoverable limit", null, List.of(task("ROOT")), List.of(), 1
         ));
-        WorkflowExecution execution = executionRepository.start(published.id(), "recover-limit", TIME);
+        WorkflowExecution execution = executionRepository.start(
+                TenantId.LOCAL, published.id(), "recover-limit", TIME);
         UUID oldToken = workflowPermitToken(execution.workflow().id());
 
         int reconciled = concurrencyPermitRecovery.reconcileConcurrencyPermits(100, TIME.plusSeconds(31));
@@ -211,7 +322,7 @@ class WorkflowExecutionPersistenceIntegrationTest {
         assertThat(replacement).isNotEqualTo(oldToken);
         assertThat(activeConcurrencyPermits("concurrency:workflow-version:%")).isEqualTo(1);
         assertThatThrownBy(() -> executionRepository.start(
-                published.id(), "recover-limit-2", TIME.plusSeconds(32)
+                TenantId.LOCAL, published.id(), "recover-limit-2", TIME.plusSeconds(32)
         )).isInstanceOf(ConcurrencyLimitExceededException.class);
     }
 
@@ -228,7 +339,8 @@ class WorkflowExecutionPersistenceIntegrationTest {
                     .mapToObj(index -> pool.submit(() -> {
                         start.await();
                         try {
-                            executionRepository.start(published.id(), "replica-" + index, TIME);
+                            executionRepository.start(
+                                    TenantId.LOCAL, published.id(), "replica-" + index, TIME);
                             return true;
                         } catch (ConcurrencyLimitExceededException | AdmissionOverloadedException saturated) {
                             return false;
@@ -256,13 +368,15 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 List.of(new TaskDependency("CHILD", "ROOT"))
         ));
         workflowService.update(
+                TenantId.LOCAL,
                 published.id(),
                 published.lockVersion(),
                 workflow(List.of(task("NEW_DRAFT_TASK")), List.of())
         );
 
-        WorkflowExecution first = executionRepository.start(published.id(), "request-1", TIME);
-        WorkflowExecution duplicate = executionRepository.start(published.id(), "request-1", TIME.plusSeconds(1));
+        WorkflowExecution first = executionRepository.start(TenantId.LOCAL, published.id(), "request-1", TIME);
+        WorkflowExecution duplicate = executionRepository.start(
+                TenantId.LOCAL, published.id(), "request-1", TIME.plusSeconds(1));
 
         assertThat(duplicate.workflow().id()).isEqualTo(first.workflow().id());
         assertThat(first.workflow().workflowVersion()).isEqualTo(1);
@@ -272,9 +386,11 @@ class WorkflowExecutionPersistenceIntegrationTest {
 
     @Test
     void rejectsExecutionOfAnUnpublishedWorkflow() {
-        WorkflowDefinition draft = workflowService.create(workflow(List.of(task("ROOT")), List.of()));
+        WorkflowDefinition draft = workflowService.create(
+                TenantId.LOCAL, workflow(List.of(task("ROOT")), List.of()));
 
-        assertThatThrownBy(() -> executionRepository.start(draft.id(), "request-1", TIME))
+        assertThatThrownBy(() -> executionRepository.start(
+                TenantId.LOCAL, draft.id(), "request-1", TIME))
                 .isInstanceOf(WorkflowNotPublishedException.class);
     }
 
@@ -293,7 +409,7 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 List.of(new TaskDefinition("ROOT", "ROOT", "NOOP", Map.of(), policy)),
                 List.of()
         ));
-        executionRepository.start(published.id(), "attempt-timeout", TIME);
+        executionRepository.start(TenantId.LOCAL, published.id(), "attempt-timeout", TIME);
 
         Instant claimedAt = TIME.plusSeconds(1);
         TaskWorkItem claimed = onlyClaim(claimedAt);
@@ -321,19 +437,21 @@ class WorkflowExecutionPersistenceIntegrationTest {
                         new TaskDependency("JOIN", "RIGHT")
                 )
         ));
-        WorkflowExecution execution = executionRepository.start(published.id(), "fan-in", TIME);
+        WorkflowExecution execution = executionRepository.start(TenantId.LOCAL, published.id(), "fan-in", TIME);
 
         TaskWorkItem root = onlyClaim(TIME.plusSeconds(1));
         executionRepository.completeTask(TaskCompletion.from(root, TaskResult.succeeded()), TIME.plusSeconds(2));
 
-        List<TaskWorkItem> branches = executionRepository.claimReadyTasks(10, TIME.plusSeconds(3));
+        List<TaskWorkItem> branches = executionRepository.claimReadyTasks(
+                TenantId.LOCAL, 10, TIME.plusSeconds(3));
         assertThat(branches).extracting(TaskWorkItem::taskKey)
                 .containsExactlyInAnyOrder("LEFT", "RIGHT");
         TaskWorkItem left = byKey(branches, "LEFT");
         TaskWorkItem right = byKey(branches, "RIGHT");
 
         executionRepository.completeTask(TaskCompletion.from(left, TaskResult.succeeded()), TIME.plusSeconds(4));
-        assertThat(executionRepository.claimReadyTasks(10, TIME.plusSeconds(5))).isEmpty();
+        assertThat(executionRepository.claimReadyTasks(
+                TenantId.LOCAL, 10, TIME.plusSeconds(5))).isEmpty();
 
         executionRepository.completeTask(TaskCompletion.from(right, TaskResult.succeeded()), TIME.plusSeconds(6));
         TaskWorkItem join = onlyClaim(TIME.plusSeconds(7));
@@ -356,7 +474,7 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 List.of(task("ROOT"), task("CHILD")),
                 List.of(new TaskDependency("CHILD", "ROOT"))
         ));
-        executionRepository.start(published.id(), "failure", TIME);
+        executionRepository.start(TenantId.LOCAL, published.id(), "failure", TIME);
         TaskWorkItem root = onlyClaim(TIME.plusSeconds(1));
 
         WorkflowExecution failed = executionRepository.completeTask(
@@ -381,10 +499,11 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 List.of(task("ROOT"), task("CHILD")),
                 List.of(new TaskDependency("CHILD", "ROOT"))
         ));
-        WorkflowExecution started = executionRepository.start(published.id(), "cancel", TIME);
+        WorkflowExecution started = executionRepository.start(TenantId.LOCAL, published.id(), "cancel", TIME);
         TaskWorkItem root = onlyClaim(TIME.plusSeconds(1));
 
-        WorkflowExecution cancelling = executionRepository.cancel(started.workflow().id(), TIME.plusSeconds(2));
+        WorkflowExecution cancelling = executionRepository.cancel(
+                TenantId.LOCAL, started.workflow().id(), TIME.plusSeconds(2));
         assertThat(cancelling.workflow().status()).isEqualTo(WorkflowRunStatus.CANCELLING);
         assertThat(cancelling.tasks()).filteredOn(task -> task.taskKey().equals("CHILD"))
                 .extracting(task -> task.status())
@@ -395,7 +514,7 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 TIME.plusSeconds(3)
         ).execution();
         WorkflowExecution duplicateCancel = executionRepository.cancel(
-                started.workflow().id(),
+                TenantId.LOCAL, started.workflow().id(),
                 TIME.plusSeconds(4)
         );
 
@@ -415,10 +534,12 @@ class WorkflowExecutionPersistenceIntegrationTest {
                         new TaskDependency("JOIN", "RIGHT")
                 )
         ));
-        WorkflowExecution execution = executionRepository.start(published.id(), "concurrency", TIME);
+        WorkflowExecution execution = executionRepository.start(
+                TenantId.LOCAL, published.id(), "concurrency", TIME);
         TaskWorkItem root = onlyClaim(TIME.plusSeconds(1));
         executionRepository.completeTask(TaskCompletion.from(root, TaskResult.succeeded()), TIME.plusSeconds(2));
-        List<TaskWorkItem> branches = executionRepository.claimReadyTasks(10, TIME.plusSeconds(3));
+        List<TaskWorkItem> branches = executionRepository.claimReadyTasks(
+                TenantId.LOCAL, 10, TIME.plusSeconds(3));
         TaskWorkItem left = byKey(branches, "LEFT");
         TaskWorkItem right = byKey(branches, "RIGHT");
 
@@ -447,7 +568,8 @@ class WorkflowExecutionPersistenceIntegrationTest {
                 TaskCompletion.from(left, TaskResult.succeeded()),
                 TIME.plusSeconds(5)
         );
-        WorkflowExecution current = executionRepository.findById(execution.workflow().id()).orElseThrow();
+        WorkflowExecution current = executionRepository.findById(
+                TenantId.LOCAL, execution.workflow().id()).orElseThrow();
         var join = current.tasks().stream().filter(task -> task.taskKey().equals("JOIN")).findFirst().orElseThrow();
         long joinReadyEvents = current.events().stream()
                 .filter(event -> event.taskRunId() != null && event.taskRunId().equals(join.id()))
@@ -463,7 +585,7 @@ class WorkflowExecutionPersistenceIntegrationTest {
     }
 
     private TaskWorkItem onlyClaim(Instant time) {
-        List<TaskWorkItem> claimed = executionRepository.claimReadyTasks(10, time);
+        List<TaskWorkItem> claimed = executionRepository.claimReadyTasks(TenantId.LOCAL, 10, time);
         assertThat(claimed).hasSize(1);
         return claimed.getFirst();
     }
@@ -493,8 +615,25 @@ class WorkflowExecutionPersistenceIntegrationTest {
     }
 
     private WorkflowDefinition publish(WorkflowDraft draft) {
-        WorkflowDefinition created = workflowService.create(draft);
-        return workflowService.publish(created.id(), created.lockVersion());
+        WorkflowDefinition created = workflowService.create(TenantId.LOCAL, draft);
+        return workflowService.publish(TenantId.LOCAL, created.id(), created.lockVersion());
+    }
+
+    private WorkflowDefinition publish(TenantId tenantId, WorkflowDraft draft) {
+        WorkflowDefinition created = workflowService.create(tenantId, draft);
+        return workflowService.publish(tenantId, created.id(), created.lockVersion());
+    }
+
+    private TenantId registerTenant(String tenantId, String displayName) {
+        jdbc.sql("""
+                INSERT INTO tenant_registry(tenant_id, display_name, status)
+                VALUES (:tenantId, :displayName, 'ACTIVE')
+                ON CONFLICT (tenant_id) DO NOTHING
+                """)
+                .param("tenantId", tenantId)
+                .param("displayName", displayName)
+                .update();
+        return new TenantId(tenantId);
     }
 
     private static WorkflowDraft workflow(List<TaskDefinition> tasks, List<TaskDependency> dependencies) {

@@ -1,0 +1,9 @@
+FlowForge has been rendered with two independently scalable workloads.
+
+Control plane service:
+  {{ include "flowforge.fullname" . }}-control-plane:{{ .Values.controlPlane.service.port }}
+
+The chart never creates application credential secrets. Verify that the external
+Secrets named under secretRefs exist before the first rollout. If trustStore is
+enabled, its Secret must contain both {{ .Values.trustStore.fileKey }} and
+{{ .Values.trustStore.passwordKey }}.

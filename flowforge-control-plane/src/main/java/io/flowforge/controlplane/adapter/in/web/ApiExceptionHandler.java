@@ -5,8 +5,14 @@ import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
+import io.flowforge.application.recovery.DeadLetterRecordNotFoundException;
+import io.flowforge.application.recovery.DeadLetterInspectionUnavailableException;
+import io.flowforge.application.recovery.DeadLetterReplayConflictException;
+import io.flowforge.application.recovery.DeadLetterReplayUnavailableException;
 import io.flowforge.application.schedule.ScheduleConflictException;
 import io.flowforge.application.schedule.ScheduleNotFoundException;
+import io.flowforge.application.tenancy.TenantQuotaConflictException;
+import io.flowforge.application.tenancy.TenantQuotaExceededException;
 import io.flowforge.application.workflow.WorkflowConflictException;
 import io.flowforge.application.workflow.WorkflowNotFoundException;
 import io.flowforge.domain.workflow.DomainValidationException;
@@ -23,6 +29,66 @@ import java.util.List;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(DeadLetterRecordNotFoundException.class)
+    ResponseEntity<ProblemDetail> deadLetterNotFound(
+            DeadLetterRecordNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.NOT_FOUND, "DEAD_LETTER_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(DeadLetterInspectionUnavailableException.class)
+    ResponseEntity<ProblemDetail> deadLetterInspectionUnavailable(
+            DeadLetterInspectionUnavailableException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "DEAD_LETTER_INSPECTION_UNAVAILABLE",
+                exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(DeadLetterReplayConflictException.class)
+    ResponseEntity<ProblemDetail> deadLetterConflict(
+            DeadLetterReplayConflictException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.CONFLICT, "DEAD_LETTER_REPLAY_CONFLICT", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(DeadLetterReplayUnavailableException.class)
+    ResponseEntity<ProblemDetail> deadLetterUnavailable(
+            DeadLetterReplayUnavailableException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.SERVICE_UNAVAILABLE, "DEAD_LETTER_REPLAY_UNAVAILABLE", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(TenantQuotaExceededException.class)
+    ResponseEntity<ProblemDetail> tenantQuotaExceeded(
+            TenantQuotaExceededException exception,
+            HttpServletRequest request
+    ) {
+        ProblemDetail detail = detail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "TENANT_QUOTA_EXCEEDED",
+                exception.getMessage(),
+                request
+        );
+        detail.setProperty("tenantId", exception.tenantId().value());
+        detail.setProperty("quota", exception.quota());
+        detail.setProperty("limit", exception.limit());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", "1")
+                .body(detail);
+    }
+
+    @ExceptionHandler(TenantQuotaConflictException.class)
+    ResponseEntity<ProblemDetail> tenantQuotaConflict(
+            TenantQuotaConflictException exception,
+            HttpServletRequest request
+    ) {
+        return problem(HttpStatus.CONFLICT, "TENANT_QUOTA_CONFLICT", exception.getMessage(), request);
+    }
+
     @ExceptionHandler(ConcurrencyLimitExceededException.class)
     ResponseEntity<ProblemDetail> concurrencyLimitExceeded(
             ConcurrencyLimitExceededException exception,

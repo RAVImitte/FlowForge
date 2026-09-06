@@ -1,11 +1,14 @@
 package io.flowforge.domain.schedule;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
 public record WorkflowSchedule(
         UUID id,
+        TenantId tenantId,
         UUID workflowId,
         ScheduleSpec spec,
         MisfirePolicy misfirePolicy,
@@ -17,6 +20,7 @@ public record WorkflowSchedule(
 ) {
     public WorkflowSchedule {
         Objects.requireNonNull(id, "id must not be null");
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(workflowId, "workflowId must not be null");
         Objects.requireNonNull(spec, "spec must not be null");
         Objects.requireNonNull(misfirePolicy, "misfirePolicy must not be null");

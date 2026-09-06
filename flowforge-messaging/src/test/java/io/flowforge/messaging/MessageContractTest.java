@@ -25,6 +25,7 @@ class MessageContractTest {
                 TaskCommandV1.SCHEMA_VERSION,
                 Instant.parse("2026-09-04T12:00:00Z"),
                 workflowId,
+                "merchant-a",
                 new TaskCommandV1(
                         workflowId,
                         taskId,
@@ -44,7 +45,9 @@ class MessageContractTest {
         );
 
         assertThat(decoded).isEqualTo(envelope);
-        assertThat(encoded).contains("\"schemaVersion\":1", "\"expectedStateVersion\":4");
+        assertThat(encoded).contains(
+                "\"schemaVersion\":1", "\"tenantId\":\"merchant-a\"", "\"expectedStateVersion\":4"
+        );
     }
 
     @Test
@@ -103,6 +106,7 @@ class MessageContractTest {
         assertThat(decoded.payload().configuration()).isEmpty();
         assertThat(decoded.payload().fencingToken()).isNull();
         assertThat(decoded.payload().attemptTimeoutMs()).isNull();
+        assertThat(decoded.tenantId()).isEqualTo("local");
     }
 
     @Test
@@ -161,7 +165,15 @@ class MessageContractTest {
                 .isEqualTo(FlowForgeTopics.TASK_RESULTS_DLQ_V1);
         assertThat(FlowForgeTopics.deadLetterTopicFor(FlowForgeTopics.TASK_HEARTBEATS_V1))
                 .isEqualTo(FlowForgeTopics.TASK_HEARTBEATS_DLQ_V1);
+        assertThat(FlowForgeTopics.sourceTopicForDeadLetter(FlowForgeTopics.TASK_COMMANDS_DLQ_V1))
+                .isEqualTo(FlowForgeTopics.TASK_COMMANDS_V1);
+        assertThat(FlowForgeTopics.sourceTopicForDeadLetter(FlowForgeTopics.TASK_RESULTS_DLQ_V1))
+                .isEqualTo(FlowForgeTopics.TASK_RESULTS_V1);
+        assertThat(FlowForgeTopics.sourceTopicForDeadLetter(FlowForgeTopics.TASK_HEARTBEATS_DLQ_V1))
+                .isEqualTo(FlowForgeTopics.TASK_HEARTBEATS_V1);
         assertThatThrownBy(() -> FlowForgeTopics.deadLetterTopicFor("flowforge.unknown.v1"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> FlowForgeTopics.sourceTopicForDeadLetter("flowforge.unknown.dlq.v1"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }

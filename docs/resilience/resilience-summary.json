@@ -1,0 +1,353 @@
+{
+    "schemaVersion":  1,
+    "matrix":  "phase-6-resilience-matrix",
+    "generatedAt":  "2026-09-06T10:39:45.1365135Z",
+    "scenarioCount":  4,
+    "requiredFailureCount":  0,
+    "passed":  true,
+    "caveat":  "Results describe this local Rancher Desktop host and configured workload only.",
+    "scenarios":  [
+                      {
+                          "id":  "postgres-pause",
+                          "dependency":  "postgres",
+                          "topology":  "single-6p",
+                          "profile":  "resilience",
+                          "faultPlan":  "postgres-pause",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  10,
+                                         "accepted":  10,
+                                         "succeeded":  10,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0,
+                                         "pollTransportErrors":  0
+                                     },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  10,
+                                                          "p50":  2658.501,
+                                                          "p95":  3101.367,
+                                                          "p99":  3101.367,
+                                                          "max":  3101.367
+                                                      },
+                                            "completion":  {
+                                                               "count":  10,
+                                                               "p50":  32179.992,
+                                                               "p95":  37212.35,
+                                                               "p99":  37212.35,
+                                                               "max":  37212.35
+                                                           }
+                                        },
+                          "recoverySeconds":  21,
+                          "suppressedCommandDuplicates":  0,
+                          "durableFailures":  0,
+                          "dependencyProbeErrors":  0,
+                          "checks":  [
+                                         {
+                                             "metric":  "injectorsRestored",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "coveredByWorkload",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "recoverySeconds",
+                                             "operator":  "\u003c=",
+                                             "limit":  45,
+                                             "actual":  21,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "suppressedCommandDuplicates",
+                                             "operator":  "\u003c=",
+                                             "limit":  0,
+                                             "actual":  0,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "durableFailures",
+                                             "operator":  "\u003c=",
+                                             "limit":  0,
+                                             "actual":  0,
+                                             "passed":  true
+                                         }
+                                     ]
+                      },
+                      {
+                          "id":  "kafka-pause",
+                          "dependency":  "kafka",
+                          "topology":  "single-6p",
+                          "profile":  "resilience",
+                          "faultPlan":  "kafka-pause",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  10,
+                                         "accepted":  10,
+                                         "succeeded":  10,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0,
+                                         "pollTransportErrors":  0
+                                     },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  10,
+                                                          "p50":  2145.98,
+                                                          "p95":  2643.347,
+                                                          "p99":  2643.347,
+                                                          "max":  2643.347
+                                                      },
+                                            "completion":  {
+                                                               "count":  10,
+                                                               "p50":  34046.391,
+                                                               "p95":  42109.082,
+                                                               "p99":  42109.082,
+                                                               "max":  42109.082
+                                                           }
+                                        },
+                          "recoverySeconds":  25,
+                          "suppressedCommandDuplicates":  8,
+                          "durableFailures":  0,
+                          "dependencyProbeErrors":  2,
+                          "checks":  [
+                                         {
+                                             "metric":  "injectorsRestored",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "coveredByWorkload",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "recoverySeconds",
+                                             "operator":  "\u003c=",
+                                             "limit":  45,
+                                             "actual":  25,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "suppressedCommandDuplicates",
+                                             "operator":  "\u003c=",
+                                             "limit":  20,
+                                             "actual":  8,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "durableFailures",
+                                             "operator":  "\u003c=",
+                                             "limit":  0,
+                                             "actual":  0,
+                                             "passed":  true
+                                         }
+                                     ]
+                      },
+                      {
+                          "id":  "redis-loss",
+                          "dependency":  "redis",
+                          "topology":  "single-6p",
+                          "profile":  "resilience-coordination",
+                          "faultPlan":  "redis-loss",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  10,
+                                         "accepted":  10,
+                                         "succeeded":  10,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0,
+                                         "pollTransportErrors":  0
+                                     },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  10,
+                                                          "p50":  2824.774,
+                                                          "p95":  3269.833,
+                                                          "p99":  3269.833,
+                                                          "max":  3269.833
+                                                      },
+                                            "completion":  {
+                                                               "count":  10,
+                                                               "p50":  29515.492,
+                                                               "p95":  41226.69,
+                                                               "p99":  41226.69,
+                                                               "max":  41226.69
+                                                           }
+                                        },
+                          "recoverySeconds":  5,
+                          "suppressedCommandDuplicates":  0,
+                          "durableFailures":  0,
+                          "dependencyProbeErrors":  0,
+                          "checks":  [
+                                         {
+                                             "metric":  "injectorsRestored",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "coveredByWorkload",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "recoverySeconds",
+                                             "operator":  "\u003c=",
+                                             "limit":  45,
+                                             "actual":  5,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "suppressedCommandDuplicates",
+                                             "operator":  "\u003c=",
+                                             "limit":  20,
+                                             "actual":  0,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "durableFailures",
+                                             "operator":  "\u003c=",
+                                             "limit":  0,
+                                             "actual":  0,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "redisCoordinationFailures",
+                                             "operator":  "\u003e=",
+                                             "limit":  1,
+                                             "actual":  15,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "coordinationReconciliations",
+                                             "operator":  "\u003e=",
+                                             "limit":  1,
+                                             "actual":  334,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "permitLimitViolations",
+                                             "operator":  "\u003c=",
+                                             "limit":  0,
+                                             "actual":  0,
+                                             "passed":  true
+                                         }
+                                     ],
+                          "redis":  {
+                                        "coordinationFailures":  15,
+                                        "reconciliations":  334,
+                                        "permitLimitViolations":  0,
+                                        "keysBeforeFlush":  11,
+                                        "reconstructedKeyCount":  10,
+                                        "reconstructedAt":  "2026-09-06T10:38:24.2762826Z"
+                                    }
+                      },
+                      {
+                          "id":  "telemetry-pause",
+                          "dependency":  "prometheus-and-otel-collector",
+                          "topology":  "single-6p",
+                          "profile":  "resilience",
+                          "faultPlan":  "telemetry-pause",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  10,
+                                         "accepted":  10,
+                                         "succeeded":  10,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0,
+                                         "pollTransportErrors":  0
+                                     },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  10,
+                                                          "p50":  2480.325,
+                                                          "p95":  2915.939,
+                                                          "p99":  2915.939,
+                                                          "max":  2915.939
+                                                      },
+                                            "completion":  {
+                                                               "count":  10,
+                                                               "p50":  21180.275,
+                                                               "p95":  28601.101,
+                                                               "p99":  28601.101,
+                                                               "max":  28601.101
+                                                           }
+                                        },
+                          "recoverySeconds":  7,
+                          "suppressedCommandDuplicates":  0,
+                          "durableFailures":  0,
+                          "dependencyProbeErrors":  0,
+                          "checks":  [
+                                         {
+                                             "metric":  "injectorsRestored",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "coveredByWorkload",
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "recoverySeconds",
+                                             "operator":  "\u003c=",
+                                             "limit":  45,
+                                             "actual":  7,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "suppressedCommandDuplicates",
+                                             "operator":  "\u003c=",
+                                             "limit":  20,
+                                             "actual":  0,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "durableFailures",
+                                             "operator":  "\u003c=",
+                                             "limit":  0,
+                                             "actual":  0,
+                                             "passed":  true
+                                         },
+                                         {
+                                             "metric":  "telemetryRecovered",
+                                             "expected":  true,
+                                             "actual":  true,
+                                             "passed":  true
+                                         }
+                                     ],
+                          "telemetry":  {
+                                            "prometheusReady":  true,
+                                            "targets":  [
+                                                            {
+                                                                "job":  "flowforge-control-plane",
+                                                                "health":  "up",
+                                                                "lastError":  ""
+                                                            },
+                                                            {
+                                                                "job":  "flowforge-worker",
+                                                                "health":  "up",
+                                                                "lastError":  ""
+                                                            }
+                                                        ],
+                                            "healthyApplicationTargets":  2,
+                                            "collectorRunning":  true,
+                                            "collectorPortOpen":  true,
+                                            "traceBatchesAfterRestore":  11
+                                        }
+                      }
+                  ]
+}

@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public record ScheduleResponse(
         UUID id,
+        String tenantId,
         UUID workflowId,
         String type,
         Instant fireAt,
@@ -27,6 +28,7 @@ public record ScheduleResponse(
         String timeZone = schedule.spec() instanceof CronSchedule cron ? cron.timeZone().getId() : null;
         return new ScheduleResponse(
                 schedule.id(),
+                schedule.tenantId().value(),
                 schedule.workflowId(),
                 schedule.spec().type().name(),
                 fireAt,

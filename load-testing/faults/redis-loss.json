@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "redis-loss",
+  "actions": [
+    {
+      "service": "redis",
+      "operation": "pause",
+      "delaySeconds": 5,
+      "durationSeconds": 5
+    },
+    {
+      "service": "redis",
+      "operation": "flush",
+      "delaySeconds": 20,
+      "durationSeconds": 0
+    }
+  ],
+  "thresholds": {
+    "maximumRecoverySeconds": 45,
+    "maximumSuppressedCommandDuplicates": 20,
+    "maximumDurableFailures": 0,
+    "minimumRedisCoordinationFailures": 1,
+    "minimumCoordinationReconciliations": 1,
+    "maximumPermitLimitViolations": 0
+  }
+}

@@ -1,9 +1,12 @@
 package io.flowforge.application.execution;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.util.Objects;
 import java.util.UUID;
 
 public record InboundTaskHeartbeat(
+        TenantId tenantId,
         UUID eventId,
         UUID workflowExecutionId,
         UUID taskExecutionId,
@@ -13,6 +16,7 @@ public record InboundTaskHeartbeat(
         String workerId
 ) {
     public InboundTaskHeartbeat {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(eventId, "eventId must not be null");
         Objects.requireNonNull(workflowExecutionId, "workflowExecutionId must not be null");
         Objects.requireNonNull(taskExecutionId, "taskExecutionId must not be null");
@@ -23,4 +27,5 @@ public record InboundTaskHeartbeat(
         taskKey = taskKey.trim();
         workerId = workerId.trim();
     }
+
 }

@@ -3,6 +3,7 @@ package io.flowforge.controlplane;
 import io.flowforge.application.coordination.TokenBucketDecision;
 import io.flowforge.application.coordination.TokenBucketPolicy;
 import io.flowforge.application.coordination.TokenBucketRateLimiter;
+import io.flowforge.domain.tenancy.TenantId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,13 +60,13 @@ class RateLimitingIntegrationTest {
     void refillsFractionalTokensAndReturnsPreciseRetryGuidance() {
         TokenBucketPolicy policy = new TokenBucketPolicy(2, 2, Duration.ofSeconds(1));
 
-        assertThat(limiter.consume("test/refill", policy, 2, NOW).granted()).isEqualTo(2);
-        TokenBucketDecision empty = limiter.consume("test/refill", policy, 1, NOW);
+        assertThat(limiter.consume(TenantId.LOCAL, "test/refill", policy, 2, NOW).granted()).isEqualTo(2);
+        TokenBucketDecision empty = limiter.consume(TenantId.LOCAL, "test/refill", policy, 1, NOW);
         TokenBucketDecision halfFull = limiter.consume(
-                "test/refill", policy, 1, NOW.plusMillis(250)
+                TenantId.LOCAL, "test/refill", policy, 1, NOW.plusMillis(250)
         );
         TokenBucketDecision refilled = limiter.consume(
-                "test/refill", policy, 1, NOW.plusMillis(500)
+                TenantId.LOCAL, "test/refill", policy, 1, NOW.plusMillis(500)
         );
 
         assertThat(empty.granted()).isZero();
@@ -87,7 +88,9 @@ class RateLimitingIntegrationTest {
                     .mapToObj(ignored -> executor.submit(() -> {
                         ready.countDown();
                         start.await(10, TimeUnit.SECONDS);
-                        return limiter.consume("test/concurrent", policy, 1, NOW).granted();
+                        return limiter.consume(
+                                TenantId.LOCAL, "test/concurrent", policy, 1, NOW
+                        ).granted();
                     }))
                     .toList();
             assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();

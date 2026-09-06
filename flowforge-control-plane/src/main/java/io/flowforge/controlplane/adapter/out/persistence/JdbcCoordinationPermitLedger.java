@@ -2,6 +2,7 @@ package io.flowforge.controlplane.adapter.out.persistence;
 
 import io.flowforge.application.coordination.CoordinationPermit;
 import io.flowforge.application.coordination.CoordinationPermitLedger;
+import io.flowforge.domain.tenancy.TenantId;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class JdbcCoordinationPermitLedger implements CoordinationPermitLedger {
     @Override
     @Transactional
     public Optional<CoordinationPermit> tryAcquire(
+            TenantId tenantId,
             String resourceKey,
             String holderId,
             UUID proposedToken,
@@ -37,25 +39,28 @@ public class JdbcCoordinationPermitLedger implements CoordinationPermitLedger {
         String resource = required(resourceKey, "resourceKey", 300);
         String holder = required(holderId, "holderId", 200);
         jdbc.sql("""
-                INSERT INTO coordination_resource(resource_key, created_at, updated_at)
-                VALUES (:resourceKey, :now, :now)
-                ON CONFLICT (resource_key) DO NOTHING
+                INSERT INTO coordination_resource(tenant_id, resource_key, created_at, updated_at)
+                VALUES (:tenantId, :resourceKey, :now, :now)
+                ON CONFLICT (tenant_id, resource_key) DO NOTHING
                 """)
+                .param("tenantId", tenantId.value())
                 .param("resourceKey", resource)
                 .param("now", timestamp(now))
                 .update();
-        lockResource(resource);
-        expire(resource, now);
+        lockResource(tenantId, resource);
+        expire(tenantId, resource, now);
 
-        Optional<CoordinationPermit> existing = findActiveForHolder(resource, holder);
+        Optional<CoordinationPermit> existing = findActiveForHolder(tenantId, resource, holder);
         if (existing.isPresent()) return existing;
 
         long active = jdbc.sql("""
                 SELECT COUNT(*)
-                  FROM coordination_permit
-                 WHERE resource_key = :resourceKey
+                 FROM coordination_permit
+                 WHERE tenant_id = :tenantId
+                   AND resource_key = :resourceKey
                    AND status = 'ACTIVE'
                 """)
+                .param("tenantId", tenantId.value())
                 .param("resourceKey", resource)
                 .query(Long.class)
                 .single();
@@ -64,36 +69,44 @@ public class JdbcCoordinationPermitLedger implements CoordinationPermitLedger {
         Instant expiresAt = now.plus(leaseDuration);
         jdbc.sql("""
                 INSERT INTO coordination_permit(
-                    token, resource_key, holder_id, status,
+                    token, tenant_id, resource_key, holder_id, status,
                     expires_at, created_at, renewed_at, released_at
                 ) VALUES (
-                    :token, :resourceKey, :holderId, 'ACTIVE',
+                    :token, :tenantId, :resourceKey, :holderId, 'ACTIVE',
                     :expiresAt, :now, :now, NULL
                 )
                 """)
                 .param("token", proposedToken)
+                .param("tenantId", tenantId.value())
                 .param("resourceKey", resource)
                 .param("holderId", holder)
                 .param("expiresAt", timestamp(expiresAt))
                 .param("now", timestamp(now))
                 .update();
-        touchResource(resource, now);
-        return Optional.of(new CoordinationPermit(resource, holder, proposedToken, expiresAt));
+        touchResource(tenantId, resource, now);
+        return Optional.of(new CoordinationPermit(tenantId, resource, holder, proposedToken, expiresAt));
     }
 
     @Override
     @Transactional
-    public Optional<CoordinationPermit> renew(UUID token, Instant now, Duration leaseDuration) {
-        Optional<String> resource = findResourceForToken(token);
+    public Optional<CoordinationPermit> renew(
+            TenantId tenantId,
+            UUID token,
+            Instant now,
+            Duration leaseDuration
+    ) {
+        Optional<String> resource = findResourceForToken(tenantId, token);
         if (resource.isEmpty()) return Optional.empty();
-        lockResource(resource.get());
+        lockResource(tenantId, resource.get());
         jdbc.sql("""
                 UPDATE coordination_permit
                    SET status = 'EXPIRED', released_at = :now
                  WHERE token = :token
+                   AND tenant_id = :tenantId
                    AND status = 'ACTIVE'
                    AND expires_at <= :now
                 """)
+                .param("tenantId", tenantId.value())
                 .param("now", timestamp(now))
                 .param("token", token)
                 .update();
@@ -102,107 +115,128 @@ public class JdbcCoordinationPermitLedger implements CoordinationPermitLedger {
                    SET expires_at = :expiresAt,
                        renewed_at = :now
                  WHERE token = :token
+                   AND tenant_id = :tenantId
                    AND status = 'ACTIVE'
                    AND expires_at > :now
-                RETURNING resource_key, holder_id, token, expires_at
+                RETURNING tenant_id, resource_key, holder_id, token, expires_at
                 """)
+                .param("tenantId", tenantId.value())
                 .param("expiresAt", timestamp(now.plus(leaseDuration)))
                 .param("now", timestamp(now))
                 .param("token", token)
                 .query(this::map)
                 .optional();
-        if (renewed.isPresent()) touchResource(resource.get(), now);
+        if (renewed.isPresent()) touchResource(tenantId, resource.get(), now);
         return renewed;
     }
 
     @Override
     @Transactional
-    public Optional<CoordinationPermit> release(UUID token, Instant now) {
-        Optional<String> resource = findResourceForToken(token);
+    public Optional<CoordinationPermit> release(TenantId tenantId, UUID token, Instant now) {
+        Optional<String> resource = findResourceForToken(tenantId, token);
         if (resource.isEmpty()) return Optional.empty();
-        lockResource(resource.get());
+        lockResource(tenantId, resource.get());
         Optional<CoordinationPermit> released = jdbc.sql("""
                 UPDATE coordination_permit
                    SET status = 'RELEASED', released_at = :now
                  WHERE token = :token
+                   AND tenant_id = :tenantId
                    AND status = 'ACTIVE'
-                RETURNING resource_key, holder_id, token, expires_at
+                RETURNING tenant_id, resource_key, holder_id, token, expires_at
                 """)
+                .param("tenantId", tenantId.value())
                 .param("now", timestamp(now))
                 .param("token", token)
                 .query(this::map)
                 .optional();
-        if (released.isPresent()) touchResource(resource.get(), now);
+        if (released.isPresent()) touchResource(tenantId, resource.get(), now);
         return released;
     }
 
     @Override
     @Transactional
-    public List<CoordinationPermit> findActive(String resourceKey, Instant now) {
+    public List<CoordinationPermit> findActive(TenantId tenantId, String resourceKey, Instant now) {
         String resource = required(resourceKey, "resourceKey", 300);
-        expire(resource, now);
+        expire(tenantId, resource, now);
         return jdbc.sql("""
-                SELECT resource_key, holder_id, token, expires_at
+                SELECT tenant_id, resource_key, holder_id, token, expires_at
                   FROM coordination_permit
-                 WHERE resource_key = :resourceKey
+                 WHERE tenant_id = :tenantId
+                   AND resource_key = :resourceKey
                    AND status = 'ACTIVE'
                  ORDER BY token
                 """)
+                .param("tenantId", tenantId.value())
                 .param("resourceKey", resource)
                 .query(this::map)
                 .list();
     }
 
-    private void lockResource(String resourceKey) {
+    private void lockResource(TenantId tenantId, String resourceKey) {
         jdbc.sql("""
                 SELECT resource_key
-                  FROM coordination_resource
-                 WHERE resource_key = :resourceKey
+                 FROM coordination_resource
+                 WHERE tenant_id = :tenantId AND resource_key = :resourceKey
                  FOR UPDATE
                 """)
+                .param("tenantId", tenantId.value())
                 .param("resourceKey", resourceKey)
                 .query(String.class)
                 .single();
     }
 
-    private void expire(String resourceKey, Instant now) {
+    private void expire(TenantId tenantId, String resourceKey, Instant now) {
         jdbc.sql("""
                 UPDATE coordination_permit
                    SET status = 'EXPIRED', released_at = :now
-                 WHERE resource_key = :resourceKey
+                 WHERE tenant_id = :tenantId
+                   AND resource_key = :resourceKey
                    AND status = 'ACTIVE'
                    AND expires_at <= :now
                 """)
+                .param("tenantId", tenantId.value())
                 .param("now", timestamp(now))
                 .param("resourceKey", resourceKey)
                 .update();
     }
 
-    private Optional<CoordinationPermit> findActiveForHolder(String resourceKey, String holderId) {
+    private Optional<CoordinationPermit> findActiveForHolder(
+            TenantId tenantId,
+            String resourceKey,
+            String holderId
+    ) {
         return jdbc.sql("""
-                SELECT resource_key, holder_id, token, expires_at
+                SELECT tenant_id, resource_key, holder_id, token, expires_at
                   FROM coordination_permit
-                 WHERE resource_key = :resourceKey
+                 WHERE tenant_id = :tenantId
+                   AND resource_key = :resourceKey
                    AND holder_id = :holderId
                    AND status = 'ACTIVE'
                 """)
+                .param("tenantId", tenantId.value())
                 .param("resourceKey", resourceKey)
                 .param("holderId", holderId)
                 .query(this::map)
                 .optional();
     }
 
-    private Optional<String> findResourceForToken(UUID token) {
-        return jdbc.sql("SELECT resource_key FROM coordination_permit WHERE token = :token")
+    private Optional<String> findResourceForToken(TenantId tenantId, UUID token) {
+        return jdbc.sql("""
+                SELECT resource_key FROM coordination_permit
+                 WHERE tenant_id = :tenantId AND token = :token
+                """)
+                .param("tenantId", tenantId.value())
                 .param("token", token)
                 .query(String.class)
                 .optional();
     }
 
-    private void touchResource(String resourceKey, Instant now) {
+    private void touchResource(TenantId tenantId, String resourceKey, Instant now) {
         jdbc.sql("""
-                UPDATE coordination_resource SET updated_at = :now WHERE resource_key = :resourceKey
+                UPDATE coordination_resource SET updated_at = :now
+                 WHERE tenant_id = :tenantId AND resource_key = :resourceKey
                 """)
+                .param("tenantId", tenantId.value())
                 .param("now", timestamp(now))
                 .param("resourceKey", resourceKey)
                 .update();
@@ -210,6 +244,7 @@ public class JdbcCoordinationPermitLedger implements CoordinationPermitLedger {
 
     private CoordinationPermit map(ResultSet rs, int rowNumber) throws SQLException {
         return new CoordinationPermit(
+                new TenantId(rs.getString("tenant_id")),
                 rs.getString("resource_key"),
                 rs.getString("holder_id"),
                 rs.getObject("token", UUID.class),

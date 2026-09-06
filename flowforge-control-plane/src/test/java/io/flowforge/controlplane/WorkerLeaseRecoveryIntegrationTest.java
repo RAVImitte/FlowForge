@@ -1,5 +1,6 @@
 package io.flowforge.controlplane;
 
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.application.execution.AttemptLeaseRecovery;
 import io.flowforge.application.execution.ExecutionConflictException;
 import io.flowforge.application.execution.ExecutionRepository;
@@ -102,13 +103,15 @@ class WorkerLeaseRecoveryIntegrationTest {
 
         assertThat(leaseRecovery.reapExpiredLeases(10, TIME.plusSeconds(30))).isZero();
         assertThat(leaseRecovery.reapExpiredLeases(10, TIME.plusSeconds(31))).isEqualTo(1);
-        assertThat(executions.findById(first.workflowRunId()).orElseThrow().events())
+        assertThat(executions.findById(TenantId.LOCAL, first.workflowRunId()).orElseThrow().events())
                 .extracting(event -> event.type())
                 .contains(ExecutionEventType.TASK_LEASE_EXPIRED, ExecutionEventType.TASK_RETRY_SCHEDULED);
         assertThat(activeTaskPermits()).isZero();
 
         assertThat(queue.releaseDueRetries(10, TIME.plusSeconds(31))).isEqualTo(1);
-        assertThat(queue.enqueueReadyTasks(first.workflowRunId(), 10, TIME.plusSeconds(31))).isEqualTo(1);
+        assertThat(queue.enqueueReadyTasks(
+                TenantId.LOCAL, first.workflowRunId(), 10, TIME.plusSeconds(31)
+        )).isEqualTo(1);
         TaskWorkItem second = distributedWorkItem(first.workflowRunId(), 2);
         assertThat(second.attemptNumber()).isEqualTo(2);
         assertThat(second.fencingToken()).isNotEqualTo(first.fencingToken());
@@ -128,7 +131,7 @@ class WorkerLeaseRecoveryIntegrationTest {
                 ),
                 TIME.plusSeconds(32)
         );
-        assertThat(executions.findById(first.workflowRunId()).orElseThrow().tasks())
+        assertThat(executions.findById(TenantId.LOCAL, first.workflowRunId()).orElseThrow().tasks())
                 .singleElement().extracting(task -> task.status()).isEqualTo(TaskRunStatus.SUCCEEDED);
     }
 
@@ -152,7 +155,7 @@ class WorkerLeaseRecoveryIntegrationTest {
             second = two.get(10, TimeUnit.SECONDS);
         }
         assertThat(first + second).isEqualTo(1);
-        assertThat(executions.findById(work.workflowRunId()).orElseThrow().events())
+        assertThat(executions.findById(TenantId.LOCAL, work.workflowRunId()).orElseThrow().events())
                 .filteredOn(event -> event.type() == ExecutionEventType.TASK_LEASE_EXPIRED)
                 .hasSize(1);
     }
@@ -161,19 +164,23 @@ class WorkerLeaseRecoveryIntegrationTest {
         TaskReliabilityPolicy policy = new TaskReliabilityPolicy(
                 maxAttempts, Duration.ZERO, 2.0, Duration.ZERO, 0.0, null, Set.of()
         );
-        WorkflowDefinition created = workflows.create(new WorkflowDraft(
+        WorkflowDefinition created = workflows.create(TenantId.LOCAL, new WorkflowDraft(
                 "Lease test", null,
                 List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy, 1)),
                 List.of()
         ));
-        WorkflowDefinition published = workflows.publish(created.id(), created.lockVersion());
-        var started = executions.start(published.id(), idempotencyKey, TIME);
-        assertThat(queue.enqueueReadyTasks(started.workflow().id(), 10, TIME.plusSeconds(1))).isEqualTo(1);
+        WorkflowDefinition published = workflows.publish(
+                TenantId.LOCAL, created.id(), created.lockVersion()
+        );
+        var started = executions.start(TenantId.LOCAL, published.id(), idempotencyKey, TIME);
+        assertThat(queue.enqueueReadyTasks(
+                TenantId.LOCAL, started.workflow().id(), 10, TIME.plusSeconds(1)
+        )).isEqualTo(1);
         return distributedWorkItem(started.workflow().id(), 1);
     }
 
     private TaskWorkItem distributedWorkItem(UUID workflowId, int attemptNumber) {
-        var task = executions.findById(workflowId).orElseThrow().tasks().getFirst();
+        var task = executions.findById(TenantId.LOCAL, workflowId).orElseThrow().tasks().getFirst();
         UUID token = jdbc.sql("""
                 SELECT fencing_token FROM task_attempt
                  WHERE task_execution_id = :taskId AND attempt_number = :attemptNumber
@@ -189,7 +196,7 @@ class WorkerLeaseRecoveryIntegrationTest {
 
     private InboundTaskHeartbeat heartbeat(UUID eventId, TaskWorkItem work, UUID fencingToken) {
         return new InboundTaskHeartbeat(
-                eventId, work.workflowRunId(), work.taskRunId(), work.taskKey(),
+                TenantId.LOCAL, eventId, work.workflowRunId(), work.taskRunId(), work.taskKey(),
                 work.attemptNumber(), fencingToken, "worker-a"
         );
     }

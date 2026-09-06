@@ -1,6 +1,7 @@
 package io.flowforge.worker;
 
 import io.flowforge.messaging.FlowForgeTopics;
+import io.flowforge.messaging.FlowForgeHeaders;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
 import io.flowforge.messaging.TaskResultOutcomeV1;
@@ -13,6 +14,7 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.admin.NewTopic;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -61,6 +64,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @Import(WorkerKafkaIntegrationTest.TestHandlerConfiguration.class)
 class WorkerKafkaIntegrationTest {
+    private static final String TRACE_ID = "fedcba9876543210fedcba9876543210";
+    private static final String TRACE_PARENT = "00-" + TRACE_ID + "-0123456789abcdef-01";
     @Container
     static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
 
@@ -115,6 +120,7 @@ class WorkerKafkaIntegrationTest {
                 TaskCommandV1.SCHEMA_VERSION,
                 Instant.now(),
                 workflowId,
+                "merchant-a",
                 new TaskCommandV1(workflowId, taskId, "COUNT", "COUNTING", Map.of(), 1, 1)
         );
         String payload = objectMapper.writeValueAsString(command);
@@ -122,10 +128,8 @@ class WorkerKafkaIntegrationTest {
         try (KafkaConsumer<String, String> results = resultConsumer();
              KafkaProducer<String, String> commands = commandProducer()) {
             results.subscribe(List.of(FlowForgeTopics.TASK_RESULTS_V1));
-            commands.send(new ProducerRecord<>(FlowForgeTopics.TASK_COMMANDS_V1, taskId.toString(), payload))
-                    .get(10, TimeUnit.SECONDS);
-            commands.send(new ProducerRecord<>(FlowForgeTopics.TASK_COMMANDS_V1, taskId.toString(), payload))
-                    .get(10, TimeUnit.SECONDS);
+            commands.send(tracedCommand(taskId, payload)).get(10, TimeUnit.SECONDS);
+            commands.send(tracedCommand(taskId, payload)).get(10, TimeUnit.SECONDS);
 
             awaitCompleted(command.eventId(), Duration.ofSeconds(15));
             var records = results.poll(Duration.ofSeconds(10));
@@ -139,6 +143,10 @@ class WorkerKafkaIntegrationTest {
                     }
             );
             assertThat(result.payload().outcome()).isEqualTo(TaskResultOutcomeV1.SUCCEEDED);
+            assertThat(result.tenantId()).isEqualTo("merchant-a");
+            assertThat(header(matching.getFirst(), FlowForgeHeaders.TENANT_ID)).isEqualTo("merchant-a");
+            assertThat(header(matching.getFirst(), "traceparent")).contains("-" + TRACE_ID + "-");
+            assertThat(header(matching.getFirst(), "baggage")).isEqualTo("tenant=portfolio");
             assertThat(results.poll(Duration.ofSeconds(1)).isEmpty()).isTrue();
         }
 
@@ -147,6 +155,9 @@ class WorkerKafkaIntegrationTest {
                 .param("eventId", command.eventId()).query(Long.class).single()).isEqualTo(1);
         assertThat(jdbc.sql("SELECT COUNT(*) FROM worker_result_outbox WHERE command_event_id = :eventId")
                 .param("eventId", command.eventId()).query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT trace_parent FROM worker_result_outbox WHERE command_event_id = :eventId")
+                .param("eventId", command.eventId()).query(String.class).single())
+                .contains("-" + TRACE_ID + "-");
     }
 
     @Test
@@ -176,6 +187,10 @@ class WorkerKafkaIntegrationTest {
                     "flowforge-correlation-id",
                     workflowId.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)
             );
+            poison.headers().add(
+                    FlowForgeHeaders.TENANT_ID,
+                    "merchant-poison".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+            );
             commands.send(poison).get(10, TimeUnit.SECONDS);
             commands.send(new ProducerRecord<>(
                     FlowForgeTopics.TASK_COMMANDS_V1,
@@ -190,6 +205,7 @@ class WorkerKafkaIntegrationTest {
             assertThat(header(deadLetter, KafkaHeaders.DLT_ORIGINAL_TOPIC))
                     .isEqualTo(FlowForgeTopics.TASK_COMMANDS_V1);
             assertThat(header(deadLetter, "flowforge-correlation-id")).isEqualTo(workflowId.toString());
+            assertThat(header(deadLetter, FlowForgeHeaders.TENANT_ID)).isEqualTo("merchant-poison");
             assertThat(header(deadLetter, "flowforge-dlq-schema-version")).isEqualTo("1");
             assertThat(header(deadLetter, "flowforge-dlq-record-id"))
                     .startsWith(FlowForgeTopics.TASK_COMMANDS_V1 + ":");
@@ -242,6 +258,16 @@ class WorkerKafkaIntegrationTest {
         return new KafkaProducer<>(properties);
     }
 
+    private static ProducerRecord<String, String> tracedCommand(UUID taskId, String payload) {
+        ProducerRecord<String, String> record = new ProducerRecord<>(
+                FlowForgeTopics.TASK_COMMANDS_V1, taskId.toString(), payload
+        );
+        record.headers().add("traceparent", TRACE_PARENT.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        record.headers().add("baggage", "tenant=portfolio".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        record.headers().add(FlowForgeHeaders.TENANT_ID, "merchant-a".getBytes(StandardCharsets.UTF_8));
+        return record;
+    }
+
     private static KafkaConsumer<String, String> resultConsumer() {
         Properties properties = new Properties();
         properties.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers());
@@ -286,6 +312,21 @@ class WorkerKafkaIntegrationTest {
 
     @TestConfiguration(proxyBeanMethods = false)
     static class TestHandlerConfiguration {
+        @Bean
+        NewTopic taskCommandsTopic() {
+            return new NewTopic(FlowForgeTopics.TASK_COMMANDS_V1, 1, (short) 1);
+        }
+
+        @Bean
+        NewTopic taskResultsTopic() {
+            return new NewTopic(FlowForgeTopics.TASK_RESULTS_V1, 1, (short) 1);
+        }
+
+        @Bean
+        NewTopic taskCommandsDeadLetterTopic() {
+            return new NewTopic(FlowForgeTopics.TASK_COMMANDS_DLQ_V1, 1, (short) 1);
+        }
+
         @Bean
         AtomicInteger handlerExecutions() {
             return new AtomicInteger();

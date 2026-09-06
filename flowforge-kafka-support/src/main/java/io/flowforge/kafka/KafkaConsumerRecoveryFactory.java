@@ -18,10 +18,10 @@ import java.time.Duration;
 import java.time.Instant;
 
 public final class KafkaConsumerRecoveryFactory {
-    static final String DLQ_SCHEMA_VERSION_HEADER = "flowforge-dlq-schema-version";
-    static final String DLQ_RECORD_ID_HEADER = "flowforge-dlq-record-id";
-    static final String DLQ_FAILURE_CLASS_HEADER = "flowforge-dlq-failure-class";
-    static final String DLQ_FAILED_AT_HEADER = "flowforge-dlq-failed-at";
+    public static final String DLQ_SCHEMA_VERSION_HEADER = "flowforge-dlq-schema-version";
+    public static final String DLQ_RECORD_ID_HEADER = "flowforge-dlq-record-id";
+    public static final String DLQ_FAILURE_CLASS_HEADER = "flowforge-dlq-failure-class";
+    public static final String DLQ_FAILED_AT_HEADER = "flowforge-dlq-failed-at";
 
     private KafkaConsumerRecoveryFactory() {
     }

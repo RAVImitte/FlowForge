@@ -12,6 +12,8 @@ import io.flowforge.domain.schedule.OneTimeSchedule;
 import io.flowforge.domain.schedule.ScheduleSpec;
 import io.flowforge.domain.schedule.ScheduleTriggerStatus;
 import io.flowforge.domain.schedule.ScheduleType;
+import io.flowforge.domain.tenancy.TenantId;
+import io.flowforge.application.tenancy.TenantQuotaProvider;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,17 +25,27 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.Comparator;
+import java.util.LinkedHashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Repository
 public class JdbcScheduleFireRepository implements ScheduleFireRepository {
     private final JdbcClient jdbc;
     private final ScheduleCalculator calculator;
+    private final TenantQuotaProvider quotas;
 
-    public JdbcScheduleFireRepository(JdbcClient jdbc, ScheduleCalculator calculator) {
+    public JdbcScheduleFireRepository(
+            JdbcClient jdbc,
+            ScheduleCalculator calculator,
+            TenantQuotaProvider quotas
+    ) {
         this.jdbc = jdbc;
         this.calculator = calculator;
+        this.quotas = quotas;
     }
 
     @Override
@@ -43,7 +55,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
             Instant now,
             Duration misfireThreshold
     ) {
-        return materializeDue(limit, Integer.MAX_VALUE, now, misfireThreshold);
+        return materializeDueWithLimit(limit, null, now, misfireThreshold);
     }
 
     @Override
@@ -54,11 +66,17 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
             Instant now,
             Duration misfireThreshold
     ) {
-        lockCapacity("backpressure:schedule-pending");
-        long pendingCount = pendingCount();
-        int availableCapacity = (int) Math.max(0, Math.min(limit, maxPending - pendingCount));
+        return materializeDueWithLimit(limit, maxPending, now, misfireThreshold);
+    }
+
+    private ScheduleMaterializationResult materializeDueWithLimit(
+            int limit,
+            Integer maxPending,
+            Instant now,
+            Duration misfireThreshold
+    ) {
         List<DueSchedule> due = jdbc.sql("""
-                SELECT id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
+                SELECT id, tenant_id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
                        misfire_policy, next_fire_at
                   FROM workflow_schedule
                  WHERE status = 'ACTIVE'
@@ -68,13 +86,31 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                  LIMIT :limit
                 """)
                 .param("now", timestamp(now))
-                .param("limit", availableCapacity)
+                .param("limit", limit)
                 .query(this::mapDueSchedule)
                 .list();
 
+        new LinkedHashSet<>(due.stream()
+                .map(DueSchedule::tenantId)
+                .sorted(Comparator.comparing(TenantId::value))
+                .toList())
+                .forEach(this::lockCapacity);
+
         int pending = 0;
         int skipped = 0;
+        int capacityDeferred = 0;
+        Map<TenantId, Integer> tenantLimits = new HashMap<>();
         for (DueSchedule schedule : due) {
+            int tenantLimit = maxPending == null
+                    ? tenantLimits.computeIfAbsent(
+                            schedule.tenantId(),
+                            tenant -> quotas.quotaFor(tenant).policy().maxPendingScheduleFires()
+                    )
+                    : maxPending;
+            if (pendingCount(schedule.tenantId()) >= tenantLimit) {
+                capacityDeferred++;
+                continue;
+            }
             boolean isMisfire = schedule.scheduledFireAt().plus(misfireThreshold).isBefore(now);
             boolean shouldSkip = schedule.misfirePolicy() == MisfirePolicy.SKIP && isMisfire;
             ScheduleTriggerStatus triggerStatus = shouldSkip
@@ -84,18 +120,37 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
             advance(schedule, now);
             if (shouldSkip) skipped++; else pending++;
         }
-        int capacityDeferred = pendingCount + pending >= maxPending && hasDueSchedule(now) ? 1 : 0;
         return new ScheduleMaterializationResult(due.size(), pending, skipped, capacityDeferred);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public QueueSnapshot pendingQueue(Instant now) {
+    public List<TenantId> pendingTenants(Instant now, int limit) {
+        return jdbc.sql("""
+                SELECT tenant_id
+                  FROM workflow_schedule_trigger
+                 WHERE (status = 'PENDING' AND available_at <= :now)
+                    OR (status = 'PROCESSING' AND claimed_until <= :now)
+                 GROUP BY tenant_id
+                 ORDER BY MIN(available_at), tenant_id
+                 LIMIT :limit
+                """)
+                .param("now", timestamp(now))
+                .param("limit", limit)
+                .query((rs, rowNumber) -> new TenantId(rs.getString("tenant_id")))
+                .list();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public QueueSnapshot pendingQueue(TenantId tenantId, Instant now) {
         return jdbc.sql("""
                 SELECT COUNT(*) AS depth, MIN(created_at) AS oldest
                   FROM workflow_schedule_trigger
-                 WHERE status IN ('PENDING', 'PROCESSING')
+                 WHERE tenant_id = :tenantId
+                   AND status IN ('PENDING', 'PROCESSING')
                 """)
+                .param("tenantId", tenantId.value())
                 .query((rs, rowNumber) -> {
                     long depth = rs.getLong("depth");
                     Instant oldest = instant(rs.getObject("oldest"));
@@ -110,6 +165,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
     @Override
     @Transactional
     public List<ClaimedScheduleFire> claimPending(
+            TenantId tenantId,
             int limit,
             String claimant,
             Instant now,
@@ -121,8 +177,9 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                 WITH candidates AS (
                     SELECT id
                       FROM workflow_schedule_trigger
-                     WHERE (status = 'PENDING' AND available_at <= :now)
-                        OR (status = 'PROCESSING' AND claimed_until <= :now)
+                     WHERE tenant_id = :tenantId
+                       AND ((status = 'PENDING' AND available_at <= :now)
+                        OR (status = 'PROCESSING' AND claimed_until <= :now))
                      ORDER BY available_at, scheduled_fire_at, id
                      FOR UPDATE SKIP LOCKED
                      LIMIT :limit
@@ -137,15 +194,17 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                   FROM candidates
                  WHERE target.id = candidates.id
                 RETURNING target.id, target.schedule_id, target.workflow_id,
-                          target.scheduled_fire_at, target.idempotency_key,
+                          target.tenant_id, target.scheduled_fire_at, target.idempotency_key,
                           target.attempt_count, target.claim_token
                 """)
                 .param("now", timestamp(now))
+                .param("tenantId", tenantId.value())
                 .param("limit", limit)
                 .param("claimant", truncate(claimant, 200))
                 .param("claimedUntil", timestamp(now.plus(leaseDuration)))
                 .param("claimToken", claimToken)
                 .query((rs, rowNumber) -> new ClaimedScheduleFire(
+                        new TenantId(rs.getString("tenant_id")),
                         rs.getObject("id", UUID.class),
                         rs.getObject("schedule_id", UUID.class),
                         rs.getObject("workflow_id", UUID.class),
@@ -157,39 +216,29 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                 .list();
     }
 
-    private void lockCapacity(String resourceKey) {
+    private void lockCapacity(TenantId tenantId) {
         jdbc.sql("""
                 SELECT pg_advisory_xact_lock(hashtextextended(:resourceKey, 0))
                 """)
-                .param("resourceKey", resourceKey)
+                .param("resourceKey", "tenant:" + tenantId.value() + ":backpressure:schedule-pending")
                 .query((rs, rowNumber) -> 1)
                 .single();
     }
 
-    private long pendingCount() {
+    private long pendingCount(TenantId tenantId) {
         return jdbc.sql("""
                 SELECT COUNT(*) FROM workflow_schedule_trigger
-                 WHERE status IN ('PENDING', 'PROCESSING')
+                 WHERE tenant_id = :tenantId AND status IN ('PENDING', 'PROCESSING')
                 """)
+                .param("tenantId", tenantId.value())
                 .query(Long.class)
-                .single();
-    }
-
-    private boolean hasDueSchedule(Instant now) {
-        return jdbc.sql("""
-                SELECT EXISTS(
-                    SELECT 1 FROM workflow_schedule
-                     WHERE status = 'ACTIVE' AND next_fire_at <= :now
-                )
-                """)
-                .param("now", timestamp(now))
-                .query(Boolean.class)
                 .single();
     }
 
     @Override
     @Transactional
     public boolean markStarted(
+            TenantId tenantId,
             UUID triggerId,
             UUID claimToken,
             UUID workflowExecutionId,
@@ -197,6 +246,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
     ) {
         return complete(
                 triggerId,
+                tenantId,
                 claimToken,
                 ScheduleTriggerStatus.STARTED,
                 workflowExecutionId,
@@ -207,9 +257,16 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
 
     @Override
     @Transactional
-    public boolean markFailed(UUID triggerId, UUID claimToken, String errorMessage, Instant now) {
+    public boolean markFailed(
+            TenantId tenantId,
+            UUID triggerId,
+            UUID claimToken,
+            String errorMessage,
+            Instant now
+    ) {
         return complete(
                 triggerId,
+                tenantId,
                 claimToken,
                 ScheduleTriggerStatus.FAILED,
                 null,
@@ -221,6 +278,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
     @Override
     @Transactional
     public boolean release(
+            TenantId tenantId,
             UUID triggerId,
             UUID claimToken,
             String errorMessage,
@@ -236,9 +294,11 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                        claim_token = NULL,
                        error_message = :errorMessage
                  WHERE id = :id
+                   AND tenant_id = :tenantId
                    AND status = 'PROCESSING'
                    AND claim_token = :claimToken
                 """)
+                .param("tenantId", tenantId.value())
                 .param("availableAt", timestamp(availableAt))
                 .param("errorMessage", truncate(errorMessage, 2_000))
                 .param("id", triggerId)
@@ -250,15 +310,16 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
     private void insertTrigger(DueSchedule schedule, ScheduleTriggerStatus status, Instant now) {
         jdbc.sql("""
                 INSERT INTO workflow_schedule_trigger(
-                    id, schedule_id, workflow_id, scheduled_fire_at, idempotency_key,
+                    id, tenant_id, schedule_id, workflow_id, scheduled_fire_at, idempotency_key,
                     status, available_at, created_at, processed_at
                 ) VALUES (
-                    :id, :scheduleId, :workflowId, :scheduledFireAt, :idempotencyKey,
+                    :id, :tenantId, :scheduleId, :workflowId, :scheduledFireAt, :idempotencyKey,
                     :status, :availableAt, :createdAt, :processedAt
                 )
                 ON CONFLICT (schedule_id, scheduled_fire_at) DO NOTHING
                 """)
                 .param("id", UUID.randomUUID())
+                .param("tenantId", schedule.tenantId().value())
                 .param("scheduleId", schedule.id())
                 .param("workflowId", schedule.workflowId())
                 .param("scheduledFireAt", timestamp(schedule.scheduledFireAt()))
@@ -283,8 +344,9 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                        next_fire_at = :nextFireAt,
                        lock_version = lock_version + 1,
                        updated_at = :now
-                 WHERE id = :id
+                 WHERE tenant_id = :tenantId AND id = :id
                 """)
+                .param("tenantId", schedule.tenantId().value())
                 .param("status", status)
                 .param("nextFireAt", timestamp(nextFireAt))
                 .param("now", timestamp(now))
@@ -294,6 +356,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
 
     private boolean complete(
             UUID triggerId,
+            TenantId tenantId,
             UUID claimToken,
             ScheduleTriggerStatus status,
             UUID workflowExecutionId,
@@ -311,9 +374,11 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                        claimed_until = NULL,
                        claim_token = NULL
                  WHERE id = :id
+                   AND tenant_id = :tenantId
                    AND status = 'PROCESSING'
                    AND claim_token = :claimToken
                 """)
+                .param("tenantId", tenantId.value())
                 .param("status", status.name())
                 .param("workflowExecutionId", workflowExecutionId)
                 .param("errorMessage", truncate(errorMessage, 2_000))
@@ -331,6 +396,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
                 : new CronSchedule(rs.getString("cron_expression"), ZoneId.of(rs.getString("time_zone")));
         return new DueSchedule(
                 rs.getObject("id", UUID.class),
+                new TenantId(rs.getString("tenant_id")),
                 rs.getObject("workflow_id", UUID.class),
                 spec,
                 MisfirePolicy.valueOf(rs.getString("misfire_policy")),
@@ -357,6 +423,7 @@ public class JdbcScheduleFireRepository implements ScheduleFireRepository {
 
     private record DueSchedule(
             UUID id,
+            TenantId tenantId,
             UUID workflowId,
             ScheduleSpec spec,
             MisfirePolicy misfirePolicy,

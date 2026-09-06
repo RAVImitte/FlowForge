@@ -6,6 +6,7 @@ import io.flowforge.application.coordination.EphemeralTokenBucketStore;
 import io.flowforge.application.coordination.TokenBucketPolicy;
 import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.application.coordination.TokenBucketSnapshot;
+import io.flowforge.domain.tenancy.TenantId;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -44,6 +45,7 @@ public class JdbcTokenBucketRateLimiter implements TokenBucketRateLimiter {
     @Override
     @Transactional
     public TokenBucketDecision consume(
+            TenantId tenantId,
             String bucketKey,
             TokenBucketPolicy policy,
             int requested,
@@ -56,14 +58,15 @@ public class JdbcTokenBucketRateLimiter implements TokenBucketRateLimiter {
         long periodMillis = policy.refillPeriod().toMillis();
         jdbc.sql("""
                 INSERT INTO admission_rate_bucket(
-                    bucket_key, capacity, refill_tokens, refill_period_ms,
+                    tenant_id, bucket_key, capacity, refill_tokens, refill_period_ms,
                     available_tokens, last_refill_at, updated_at
                 ) VALUES (
-                    :key, :capacity, :refillTokens, :refillPeriodMs,
+                    :tenantId, :key, :capacity, :refillTokens, :refillPeriodMs,
                     :capacity, :now, :now
                 )
-                ON CONFLICT (bucket_key) DO NOTHING
+                ON CONFLICT (tenant_id, bucket_key) DO NOTHING
                 """)
+                .param("tenantId", tenantId.value())
                 .param("key", key)
                 .param("capacity", policy.capacity())
                 .param("refillTokens", policy.refillTokens())
@@ -76,10 +79,11 @@ public class JdbcTokenBucketRateLimiter implements TokenBucketRateLimiter {
                        available_tokens, state_version,
                        GREATEST(last_refill_at, :now) AS effective_refill_at,
                        GREATEST(0, EXTRACT(EPOCH FROM (:now - last_refill_at)) * 1000) AS elapsed_ms
-                  FROM admission_rate_bucket
-                 WHERE bucket_key = :key
+                 FROM admission_rate_bucket
+                 WHERE tenant_id = :tenantId AND bucket_key = :key
                  FOR UPDATE
                 """)
+                .param("tenantId", tenantId.value())
                 .param("key", key)
                 .param("now", Timestamp.from(now))
                 .query((rs, rowNumber) -> new Bucket(
@@ -114,8 +118,9 @@ public class JdbcTokenBucketRateLimiter implements TokenBucketRateLimiter {
                        last_refill_at = GREATEST(last_refill_at, :now),
                        updated_at = GREATEST(updated_at, :now),
                        state_version = :stateVersion
-                 WHERE bucket_key = :key
+                 WHERE tenant_id = :tenantId AND bucket_key = :key
                 """)
+                .param("tenantId", tenantId.value())
                 .param("capacity", policy.capacity())
                 .param("refillTokens", policy.refillTokens())
                 .param("refillPeriodMs", periodMillis)
@@ -125,7 +130,7 @@ public class JdbcTokenBucketRateLimiter implements TokenBucketRateLimiter {
                 .param("key", key)
                 .update();
         scheduleMirror(new TokenBucketSnapshot(
-                key, policy, remaining, bucket.effectiveRefillAt(), nextVersion
+                tenantId, key, policy, remaining, bucket.effectiveRefillAt(), nextVersion
         ));
         return new TokenBucketDecision(granted, retryAfter);
     }

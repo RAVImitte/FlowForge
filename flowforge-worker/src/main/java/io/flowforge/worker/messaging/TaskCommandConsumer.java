@@ -1,5 +1,6 @@
 package io.flowforge.worker.messaging;
 
+import io.flowforge.kafka.KafkaTenantHeader;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
@@ -53,6 +54,7 @@ public class TaskCommandConsumer {
             }
             TaskCommandV1 command = envelope.payload();
             try (LogContext messageContext = LogContext.open(
+                    LogFields.TENANT_ID, envelope.tenantId(),
                     LogFields.CORRELATION_ID, envelope.correlationId(),
                     LogFields.EVENT_ID, envelope.eventId(),
                     LogFields.WORKFLOW_EXECUTION_ID, command.workflowExecutionId(),
@@ -89,6 +91,7 @@ public class TaskCommandConsumer {
                 || envelope.schemaVersion() != TaskCommandV1.SCHEMA_VERSION) {
             throw new IllegalArgumentException("Unsupported task command contract version");
         }
+        KafkaTenantHeader.requireMatching(record.headers(), envelope.tenantId());
         if (!envelope.correlationId().equals(envelope.payload().workflowExecutionId())) {
             throw new IllegalArgumentException("Task command correlation ID does not match workflow execution");
         }

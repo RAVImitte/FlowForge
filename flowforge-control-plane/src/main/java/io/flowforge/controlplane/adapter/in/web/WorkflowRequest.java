@@ -1,5 +1,6 @@
 package io.flowforge.controlplane.adapter.in.web;
 
+import io.flowforge.domain.workflow.SecretReference;
 import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
@@ -29,9 +30,32 @@ public record WorkflowRequest(
             @NotBlank @Size(max = 200) String name,
             @NotBlank @Pattern(regexp = "[A-Z][A-Z0-9_.-]{0,99}") String type,
             Map<String, Object> configuration,
+            @Size(max = 100) Map<
+                    @Pattern(regexp = "[A-Za-z][A-Za-z0-9_.-]{0,99}") String,
+                    @Valid SecretReferenceRequest> secretReferences,
             @Valid ReliabilityPolicyRequest reliabilityPolicy,
             @Min(1) @Max(100000) Integer maxConcurrency
     ) {
+        public TaskRequest(
+                String key,
+                String name,
+                String type,
+                Map<String, Object> configuration,
+                ReliabilityPolicyRequest reliabilityPolicy,
+                Integer maxConcurrency
+        ) {
+            this(key, name, type, configuration, Map.of(), reliabilityPolicy, maxConcurrency);
+        }
+    }
+
+    public record SecretReferenceRequest(
+            @NotBlank @Pattern(regexp = "[a-z][a-z0-9.-]{0,63}") String provider,
+            @NotBlank @Size(max = 512) String name,
+            @Size(max = 200) String version
+    ) {
+        SecretReference toDomain() {
+            return new SecretReference(provider, name, version);
+        }
     }
 
     public record ReliabilityPolicyRequest(

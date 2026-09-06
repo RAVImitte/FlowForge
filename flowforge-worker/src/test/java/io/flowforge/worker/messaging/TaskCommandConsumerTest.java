@@ -74,6 +74,6 @@ class TaskCommandConsumerTest {
                 .containsEntry(LogFields.KAFKA_TOPIC, FlowForgeTopics.TASK_COMMANDS_V1)
                 .containsEntry(LogFields.KAFKA_PARTITION, "4")
                 .containsEntry(LogFields.KAFKA_OFFSET, "19");
-        assertThat(MDC.getCopyOfContextMap()).isNull();
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
     }
 }

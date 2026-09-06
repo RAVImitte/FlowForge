@@ -1,4 +1,6 @@
 flowforge:
+  security:
+    enabled: ${FLOWFORGE_SECURITY_ENABLED:true}
   kafka:
     enabled: true
   outbox:

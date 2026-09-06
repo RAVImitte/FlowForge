@@ -1,9 +1,12 @@
 package io.flowforge.controlplane.adapter.out.messaging;
 
+import io.flowforge.observability.TraceContextSnapshot;
+
 import java.time.Instant;
 import java.util.UUID;
 
 public record OutboxMessage(
+        String tenantId,
         UUID id,
         UUID workflowExecutionId,
         UUID taskExecutionId,
@@ -15,6 +18,7 @@ public record OutboxMessage(
         String payload,
         int attemptCount,
         Instant createdAt,
-        UUID claimToken
+        UUID claimToken,
+        TraceContextSnapshot traceContext
 ) {
 }

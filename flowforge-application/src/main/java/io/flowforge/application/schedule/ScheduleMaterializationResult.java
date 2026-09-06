@@ -5,8 +5,9 @@ public record ScheduleMaterializationResult(int due, int pending, int skipped, i
         if (due < 0 || pending < 0 || skipped < 0 || capacityDeferred < 0) {
             throw new IllegalArgumentException("Materialization counts must not be negative");
         }
-        if (due != pending + skipped) {
-            throw new IllegalArgumentException("Due count must equal pending plus skipped counts");
+        if (due != pending + skipped + capacityDeferred) {
+            throw new IllegalArgumentException(
+                    "Due count must equal pending plus skipped plus capacity-deferred counts");
         }
     }
 

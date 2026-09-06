@@ -5,6 +5,9 @@ import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
+import io.flowforge.controlplane.config.FlowForgeSecurityProperties;
+import io.flowforge.controlplane.config.TenantContextFilter;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRun;
 import io.flowforge.domain.execution.WorkflowRunStatus;
@@ -12,6 +15,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -49,23 +53,27 @@ class WorkflowExecutionControllerTest {
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 (workItem, failure) -> { }
         );
-        when(repository.claimReadyTasks(anyInt(), any())).thenReturn(List.of());
+        when(repository.claimReadyTasks(any(TenantId.class), anyInt(), any())).thenReturn(List.of());
+        FlowForgeSecurityProperties properties = new FlowForgeSecurityProperties();
+        properties.setEnabled(false);
         mvc = MockMvcBuilders.standaloneSetup(new WorkflowExecutionController(service))
                 .setControllerAdvice(new ApiExceptionHandler())
+                .addFilters(new TenantContextFilter(properties, JsonMapper.builder().build()))
                 .build();
     }
 
     @Test
     void startsAnExecutionAndReturnsItsCanonicalLocation() throws Exception {
         WorkflowExecution execution = execution();
-        when(repository.start(WORKFLOW_ID, "order-42", NOW)).thenReturn(execution);
-        when(repository.findById(EXECUTION_ID)).thenReturn(Optional.of(execution));
+        when(repository.start(TenantId.LOCAL, WORKFLOW_ID, "order-42", NOW)).thenReturn(execution);
+        when(repository.findById(TenantId.LOCAL, EXECUTION_ID)).thenReturn(Optional.of(execution));
 
         mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
                         .header("Idempotency-Key", "order-42"))
                 .andExpect(status().isAccepted())
                 .andExpect(header().string("Location", "/api/v1/executions/" + EXECUTION_ID))
                 .andExpect(jsonPath("$.id").value(EXECUTION_ID.toString()))
+                .andExpect(jsonPath("$.tenantId").value("local"))
                 .andExpect(jsonPath("$.status").value("RUNNING"));
     }
 
@@ -78,7 +86,7 @@ class WorkflowExecutionControllerTest {
 
     @Test
     void reportsWorkflowConcurrencySaturationAsTooManyRequests() throws Exception {
-        when(repository.start(WORKFLOW_ID, "order-43", NOW))
+        when(repository.start(TenantId.LOCAL, WORKFLOW_ID, "order-43", NOW))
                 .thenThrow(new ConcurrencyLimitExceededException(WORKFLOW_ID, 3));
 
         mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
@@ -92,7 +100,7 @@ class WorkflowExecutionControllerTest {
 
     @Test
     void reportsReadyQueueSaturationWithRetryGuidance() throws Exception {
-        when(repository.start(WORKFLOW_ID, "order-44", NOW))
+        when(repository.start(TenantId.LOCAL, WORKFLOW_ID, "order-44", NOW))
                 .thenThrow(new AdmissionOverloadedException(WORKFLOW_ID, 25, Duration.ofMillis(1500)));
 
         mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
@@ -105,7 +113,7 @@ class WorkflowExecutionControllerTest {
 
     @Test
     void reportsUnknownExecutionsAsNotFound() throws Exception {
-        when(repository.findById(EXECUTION_ID)).thenReturn(Optional.empty());
+        when(repository.findById(TenantId.LOCAL, EXECUTION_ID)).thenReturn(Optional.empty());
 
         mvc.perform(get("/api/v1/executions/{executionId}", EXECUTION_ID))
                 .andExpect(status().isNotFound())
@@ -117,8 +125,9 @@ class WorkflowExecutionControllerTest {
         WorkflowRun cancelledRun = execution().workflow()
                 .transitionTo(WorkflowRunStatus.CANCELLING, NOW)
                 .transitionTo(WorkflowRunStatus.CANCELLED, NOW);
-        WorkflowExecution cancelled = new WorkflowExecution(cancelledRun, List.of(), List.of(), List.of());
-        when(repository.cancel(EXECUTION_ID, NOW)).thenReturn(cancelled);
+        WorkflowExecution cancelled = new WorkflowExecution(
+                TenantId.LOCAL, cancelledRun, List.of(), List.of(), List.of());
+        when(repository.cancel(TenantId.LOCAL, EXECUTION_ID, NOW)).thenReturn(cancelled);
 
         mvc.perform(post("/api/v1/executions/{executionId}/cancel", EXECUTION_ID))
                 .andExpect(status().isOk())
@@ -128,6 +137,6 @@ class WorkflowExecutionControllerTest {
     private static WorkflowExecution execution() {
         WorkflowRun workflow = WorkflowRun.pending(EXECUTION_ID, WORKFLOW_ID, 1, NOW)
                 .transitionTo(WorkflowRunStatus.RUNNING, NOW);
-        return new WorkflowExecution(workflow, List.of(), List.of(), List.of());
+        return new WorkflowExecution(TenantId.LOCAL, workflow, List.of(), List.of(), List.of());
     }
 }

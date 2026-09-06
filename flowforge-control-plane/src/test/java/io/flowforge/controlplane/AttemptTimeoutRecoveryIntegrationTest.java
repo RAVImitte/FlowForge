@@ -1,5 +1,6 @@
 package io.flowforge.controlplane;
 
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.application.execution.AttemptTimeoutRecovery;
 import io.flowforge.application.execution.ExecutionConflictException;
 import io.flowforge.application.execution.ExecutionRepository;
@@ -103,7 +104,7 @@ class AttemptTimeoutRecoveryIntegrationTest {
         assertThat(timeoutRecovery.reapTimedOutAttempts(10, TIME.plusSeconds(10))).isZero();
 
         assertThat(timeoutRecovery.reapTimedOutAttempts(10, TIME.plusSeconds(11))).isEqualTo(1);
-        WorkflowExecution scheduled = executions.findById(first.workflowRunId()).orElseThrow();
+        WorkflowExecution scheduled = executions.findById(TenantId.LOCAL, first.workflowRunId()).orElseThrow();
         assertThat(scheduled.workflow().status()).isEqualTo(WorkflowRunStatus.RUNNING);
         assertThat(scheduled.tasks()).singleElement().satisfies(task -> {
             assertThat(task.status()).isEqualTo(TaskRunStatus.RETRY_SCHEDULED);
@@ -142,7 +143,7 @@ class AttemptTimeoutRecoveryIntegrationTest {
 
         assertThat(timeoutRecovery.reapTimedOutAttempts(10, TIME.plusSeconds(4))).isEqualTo(1);
 
-        WorkflowExecution timedOut = executions.findById(work.workflowRunId()).orElseThrow();
+        WorkflowExecution timedOut = executions.findById(TenantId.LOCAL, work.workflowRunId()).orElseThrow();
         assertThat(timedOut.workflow().status()).isEqualTo(WorkflowRunStatus.FAILED);
         assertThat(timedOut.tasks()).singleElement()
                 .extracting(task -> task.status())
@@ -184,7 +185,7 @@ class AttemptTimeoutRecoveryIntegrationTest {
         }
 
         assertThat(firstReaped + secondReaped).isEqualTo(1);
-        WorkflowExecution timedOut = executions.findById(work.workflowRunId()).orElseThrow();
+        WorkflowExecution timedOut = executions.findById(TenantId.LOCAL, work.workflowRunId()).orElseThrow();
         assertThat(timedOut.attempts()).hasSize(1);
         assertThat(timedOut.events()).filteredOn(event ->
                 event.type() == ExecutionEventType.TASK_ATTEMPT_TIMED_OUT).hasSize(1);
@@ -197,7 +198,7 @@ class AttemptTimeoutRecoveryIntegrationTest {
         for (int index = 0; index < workload; index++) {
             start(policy(1, Duration.ZERO, Duration.ofSeconds(1)), "timeout-batch-race-" + index);
         }
-        assertThat(executions.claimReadyTasks(workload, TIME.plusSeconds(1))).hasSize(workload);
+        assertThat(executions.claimReadyTasks(TenantId.LOCAL, workload, TIME.plusSeconds(1))).hasSize(workload);
 
         CountDownLatch start = new CountDownLatch(1);
         int firstReaped;
@@ -231,18 +232,18 @@ class AttemptTimeoutRecoveryIntegrationTest {
     }
 
     private WorkflowExecution start(TaskReliabilityPolicy policy, String idempotencyKey) {
-        WorkflowDefinition draft = workflows.create(new WorkflowDraft(
+        WorkflowDefinition draft = workflows.create(TenantId.LOCAL, new WorkflowDraft(
                 "Timeout test",
                 null,
                 List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy, 1)),
                 List.of()
         ));
-        WorkflowDefinition published = workflows.publish(draft.id(), draft.lockVersion());
-        return executions.start(published.id(), idempotencyKey, TIME);
+        WorkflowDefinition published = workflows.publish(TenantId.LOCAL, draft.id(), draft.lockVersion());
+        return executions.start(TenantId.LOCAL, published.id(), idempotencyKey, TIME);
     }
 
     private TaskWorkItem onlyClaim(Instant now) {
-        List<TaskWorkItem> claimed = executions.claimReadyTasks(10, now);
+        List<TaskWorkItem> claimed = executions.claimReadyTasks(TenantId.LOCAL, 10, now);
         assertThat(claimed).hasSize(1);
         return claimed.getFirst();
     }

@@ -4,6 +4,8 @@ import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
 import io.flowforge.messaging.TaskResultV1;
+import io.flowforge.observability.TraceContextPropagation;
+import io.flowforge.observability.TraceContextSnapshot;
 import io.flowforge.worker.application.WorkerTaskResult;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -31,14 +33,15 @@ public class WorkerCommandRepository {
         TaskCommandV1 command = envelope.payload();
         int inserted = jdbc.sql("""
                 INSERT INTO worker_command_inbox(
-                    event_id, workflow_execution_id, task_execution_id, task_key, task_type,
+                    tenant_id, event_id, workflow_execution_id, task_execution_id, task_key, task_type,
                     expected_state_version, attempt_number, command_payload, status, received_at
                 ) VALUES (
-                    :eventId, :workflowId, :taskId, :taskKey, :taskType,
+                    :tenantId, :eventId, :workflowId, :taskId, :taskKey, :taskType,
                     :stateVersion, :attemptNumber, CAST(:payload AS jsonb), 'RECEIVED', :receivedAt
                 )
-                ON CONFLICT (event_id) DO NOTHING
+                ON CONFLICT (tenant_id, event_id) DO NOTHING
                 """)
+                .param("tenantId", envelope.tenantId())
                 .param("eventId", envelope.eventId())
                 .param("workflowId", command.workflowExecutionId())
                 .param("taskId", command.taskExecutionId())
@@ -50,14 +53,15 @@ public class WorkerCommandRepository {
                 .param("receivedAt", Timestamp.from(now))
                 .update();
 
-        StoredCommand stored = find(envelope.eventId(), false);
+        StoredCommand stored = find(envelope.tenantId(), envelope.eventId(), false);
         if (inserted == 0) {
             boolean samePayload = jdbc.sql("""
                     SELECT command_payload = CAST(:payload AS jsonb)
-                      FROM worker_command_inbox
-                     WHERE event_id = :eventId
+                     FROM worker_command_inbox
+                     WHERE tenant_id = :tenantId AND event_id = :eventId
                     """)
                     .param("payload", rawPayload)
+                    .param("tenantId", envelope.tenantId())
                     .param("eventId", envelope.eventId())
                     .query(Boolean.class)
                     .single();
@@ -80,11 +84,11 @@ public class WorkerCommandRepository {
             String workerId,
             Instant now
     ) {
-        StoredCommand stored = find(envelope.eventId(), true);
+        StoredCommand stored = find(envelope.tenantId(), envelope.eventId(), true);
         validateIdentity(envelope, stored);
         if (stored.status().equals("COMPLETED")) return stored.resultEventId();
 
-        UUID resultEventId = deterministicResultId(envelope.eventId());
+        UUID resultEventId = deterministicResultId(envelope.tenantId(), envelope.eventId());
         TaskCommandV1 command = envelope.payload();
         MessageEnvelope<TaskResultV1> resultEnvelope = new MessageEnvelope<>(
                 resultEventId,
@@ -92,6 +96,7 @@ public class WorkerCommandRepository {
                 TaskResultV1.SCHEMA_VERSION,
                 now,
                 command.workflowExecutionId(),
+                envelope.tenantId(),
                 new TaskResultV1(
                         command.workflowExecutionId(),
                         command.taskExecutionId(),
@@ -105,17 +110,21 @@ public class WorkerCommandRepository {
                         result.retryable()
                 )
         );
+        TraceContextSnapshot traceContext = TraceContextPropagation.capture();
         jdbc.sql("""
                 INSERT INTO worker_result_outbox(
-                    id, command_event_id, workflow_execution_id, task_execution_id,
+                    tenant_id, id, command_event_id, workflow_execution_id, task_execution_id,
                     topic, record_key, event_type, schema_version, payload,
-                    status, available_at, created_at
+                    status, available_at, created_at,
+                    trace_parent, trace_state, trace_baggage
                 ) VALUES (
-                    :id, :commandEventId, :workflowId, :taskId,
+                    :tenantId, :id, :commandEventId, :workflowId, :taskId,
                     :topic, :recordKey, :eventType, :schemaVersion, CAST(:payload AS jsonb),
-                    'PENDING', :availableAt, :createdAt
+                    'PENDING', :availableAt, :createdAt,
+                    :traceParent, :traceState, :traceBaggage
                 )
                 """)
+                .param("tenantId", envelope.tenantId())
                 .param("id", resultEventId)
                 .param("commandEventId", envelope.eventId())
                 .param("workflowId", command.workflowExecutionId())
@@ -127,6 +136,9 @@ public class WorkerCommandRepository {
                 .param("payload", toJson(resultEnvelope))
                 .param("availableAt", Timestamp.from(now))
                 .param("createdAt", Timestamp.from(now))
+                .param("traceParent", traceContext.traceParent())
+                .param("traceState", traceContext.traceState())
+                .param("traceBaggage", traceContext.baggage())
                 .update();
         jdbc.sql("""
                 UPDATE worker_command_inbox
@@ -135,25 +147,29 @@ public class WorkerCommandRepository {
                        completed_by = :completedBy,
                        result_event_id = :resultEventId
                  WHERE event_id = :eventId
+                   AND tenant_id = :tenantId
                    AND status = 'RECEIVED'
                 """)
                 .param("completedAt", Timestamp.from(now))
                 .param("completedBy", workerId)
                 .param("resultEventId", resultEventId)
+                .param("tenantId", envelope.tenantId())
                 .param("eventId", envelope.eventId())
                 .update();
         return resultEventId;
     }
 
-    private StoredCommand find(UUID eventId, boolean lock) {
+    private StoredCommand find(String tenantId, UUID eventId, boolean lock) {
         return jdbc.sql("""
-                SELECT event_id, workflow_execution_id, task_execution_id, task_key, task_type,
+                SELECT tenant_id, event_id, workflow_execution_id, task_execution_id, task_key, task_type,
                        expected_state_version, attempt_number, status, result_event_id
                   FROM worker_command_inbox
-                 WHERE event_id = :eventId
+                 WHERE tenant_id = :tenantId AND event_id = :eventId
                 """ + (lock ? " FOR UPDATE" : ""))
+                .param("tenantId", tenantId)
                 .param("eventId", eventId)
                 .query((rs, rowNum) -> new StoredCommand(
+                        rs.getString("tenant_id"),
                         rs.getObject("event_id", UUID.class),
                         rs.getObject("workflow_execution_id", UUID.class),
                         rs.getObject("task_execution_id", UUID.class),
@@ -169,7 +185,8 @@ public class WorkerCommandRepository {
 
     private static void validateIdentity(MessageEnvelope<TaskCommandV1> envelope, StoredCommand stored) {
         TaskCommandV1 command = envelope.payload();
-        if (!stored.workflowExecutionId().equals(command.workflowExecutionId())
+        if (!stored.tenantId().equals(envelope.tenantId())
+                || !stored.workflowExecutionId().equals(command.workflowExecutionId())
                 || !stored.taskExecutionId().equals(command.taskExecutionId())
                 || !stored.taskKey().equals(command.taskKey())
                 || !stored.taskType().equals(command.taskType())
@@ -187,13 +204,15 @@ public class WorkerCommandRepository {
         }
     }
 
-    private static UUID deterministicResultId(UUID commandEventId) {
+    private static UUID deterministicResultId(String tenantId, UUID commandEventId) {
         return UUID.nameUUIDFromBytes(
-                ("flowforge-task-result:" + commandEventId).getBytes(StandardCharsets.UTF_8)
+                ("flowforge-task-result:" + tenantId + ":" + commandEventId)
+                        .getBytes(StandardCharsets.UTF_8)
         );
     }
 
     private record StoredCommand(
+            String tenantId,
             UUID eventId,
             UUID workflowExecutionId,
             UUID taskExecutionId,

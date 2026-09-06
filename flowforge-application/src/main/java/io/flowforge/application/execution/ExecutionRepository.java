@@ -1,5 +1,6 @@
 package io.flowforge.application.execution;
 
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.execution.WorkflowExecution;
 
 import java.time.Instant;
@@ -8,15 +9,17 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface ExecutionRepository {
-    WorkflowExecution start(UUID workflowId, String idempotencyKey, Instant now);
+    WorkflowExecution start(TenantId tenantId, UUID workflowId, String idempotencyKey, Instant now);
 
-    Optional<WorkflowExecution> findById(UUID executionId);
+    Optional<WorkflowExecution> findById(TenantId tenantId, UUID executionId);
 
-    WorkflowExecution cancel(UUID executionId, Instant now);
+    WorkflowExecution cancel(TenantId tenantId, UUID executionId, Instant now);
 
-    List<TaskWorkItem> claimReadyTasks(int limit, Instant now);
+    List<TenantId> readyTenants(Instant now, int limit);
 
-    default ReadyQueueSnapshot readyQueue(Instant now, int requestedLimit) {
+    List<TaskWorkItem> claimReadyTasks(TenantId tenantId, int limit, Instant now);
+
+    default ReadyQueueSnapshot readyQueue(TenantId tenantId, Instant now, int requestedLimit) {
         return ReadyQueueSnapshot.unknown(requestedLimit);
     }
 

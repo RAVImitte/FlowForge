@@ -5,12 +5,16 @@ import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.application.coordination.TokenBucketDecision;
 import io.flowforge.application.coordination.TokenBucketPolicy;
 import io.flowforge.application.coordination.TokenBucketRateLimiter;
+import io.flowforge.application.tenancy.TenantQuota;
+import io.flowforge.application.tenancy.TenantQuotaPolicy;
+import io.flowforge.application.tenancy.TenantQuotaProvider;
 import io.flowforge.domain.execution.WorkflowExecution;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Objects;
 
 public final class ScheduleFireService {
@@ -23,7 +27,7 @@ public final class ScheduleFireService {
     private final Duration misfireThreshold;
     private final int maxPending;
     private final TokenBucketRateLimiter rateLimiter;
-    private final TokenBucketPolicy rateLimitPolicy;
+    private final TenantQuotaProvider quotaProvider;
     private final ScheduleBackpressureObserver backpressureObserver;
 
     public ScheduleFireService(
@@ -37,6 +41,30 @@ public final class ScheduleFireService {
             int maxPending,
             TokenBucketRateLimiter rateLimiter,
             TokenBucketPolicy rateLimitPolicy,
+            ScheduleBackpressureObserver backpressureObserver
+    ) {
+        this(
+                fires, executions, clock, instanceId, leaseDuration, retryDelay,
+                misfireThreshold, maxPending, rateLimiter,
+                tenantId -> TenantQuota.inherited(tenantId, new TenantQuotaPolicy(
+                        1_000_000, 1_000_000, maxPending, 1_000_000,
+                        rateLimitPolicy, rateLimitPolicy
+                )),
+                backpressureObserver
+        );
+    }
+
+    public ScheduleFireService(
+            ScheduleFireRepository fires,
+            WorkflowExecutionService executions,
+            Clock clock,
+            String instanceId,
+            Duration leaseDuration,
+            Duration retryDelay,
+            Duration misfireThreshold,
+            int maxPending,
+            TokenBucketRateLimiter rateLimiter,
+            TenantQuotaProvider quotaProvider,
             ScheduleBackpressureObserver backpressureObserver
     ) {
         this.fires = Objects.requireNonNull(fires);
@@ -54,7 +82,7 @@ public final class ScheduleFireService {
         }
         this.maxPending = maxPending;
         this.rateLimiter = Objects.requireNonNull(rateLimiter);
-        this.rateLimitPolicy = Objects.requireNonNull(rateLimitPolicy);
+        this.quotaProvider = Objects.requireNonNull(quotaProvider);
         this.backpressureObserver = Objects.requireNonNull(backpressureObserver);
     }
 
@@ -76,7 +104,7 @@ public final class ScheduleFireService {
                 retryDelay,
                 misfireThreshold,
                 1_000_000,
-                (key, policy, requested, now) -> new TokenBucketDecision(requested, Duration.ZERO),
+                (tenantId, key, policy, requested, now) -> new TokenBucketDecision(requested, Duration.ZERO),
                 new TokenBucketPolicy(1_000, 1_000, Duration.ofSeconds(1)),
                 new ScheduleBackpressureObserver() { }
         );
@@ -87,27 +115,42 @@ public final class ScheduleFireService {
         validateLimit(processingLimit, "processingLimit");
         Instant now = clock.instant();
         ScheduleMaterializationResult materialized = fires.materializeDue(
-                materializationLimit, maxPending, now, misfireThreshold
+                materializationLimit, now, misfireThreshold
         );
         if (materialized == null) materialized = ScheduleMaterializationResult.empty();
-        QueueSnapshot queue = fires.pendingQueue(now);
-        if (queue == null) queue = new QueueSnapshot(processingLimit, Duration.ZERO);
-        int requested = (int) Math.min(processingLimit, queue.depth());
-        TokenBucketDecision rateDecision = requested == 0
-                ? new TokenBucketDecision(0, Duration.ZERO)
-                : rateLimiter.consume("schedule-fires", rateLimitPolicy, requested, now);
-        int throttled = requested - rateDecision.granted();
-        if (throttled > 0) {
-            backpressureObserver.scheduleFiresThrottled(
-                    requested, rateDecision.granted(), rateDecision.retryAfter()
+        long queueDepth = 0;
+        Duration oldestAge = Duration.ZERO;
+        int throttled = 0;
+        List<ClaimedScheduleFire> claimed = new ArrayList<>();
+        for (var tenantId : fires.pendingTenants(now, processingLimit)) {
+            QueueSnapshot tenantQueue = fires.pendingQueue(tenantId, now);
+            if (tenantQueue == null) tenantQueue = QueueSnapshot.empty();
+            queueDepth += tenantQueue.depth();
+            if (tenantQueue.oldestAge().compareTo(oldestAge) > 0) oldestAge = tenantQueue.oldestAge();
+            int remaining = processingLimit - claimed.size();
+            if (remaining == 0) break;
+            int requested = (int) Math.min(remaining, tenantQueue.depth());
+            if (requested == 0) continue;
+            TokenBucketDecision rateDecision = rateLimiter.consume(
+                    tenantId, "schedule-fires",
+                    quotaProvider.quotaFor(tenantId).policy().scheduleRateLimit(), requested, now
             );
+            int tenantThrottled = requested - rateDecision.granted();
+            throttled += tenantThrottled;
+            if (tenantThrottled > 0) {
+                backpressureObserver.scheduleFiresThrottled(
+                        requested, rateDecision.granted(), rateDecision.retryAfter()
+                );
+            }
+            if (rateDecision.granted() > 0) {
+                claimed.addAll(fires.claimPending(
+                        tenantId, rateDecision.granted(), instanceId, now, leaseDuration
+                ));
+            }
         }
         if (materialized.capacityDeferred() > 0) {
-            backpressureObserver.pendingQueueSaturated(queue.depth(), maxPending);
+            backpressureObserver.pendingQueueSaturated(queueDepth, maxPending);
         }
-        List<ClaimedScheduleFire> claimed = rateDecision.granted() == 0
-                ? List.of()
-                : fires.claimPending(rateDecision.granted(), instanceId, now, leaseDuration);
 
         int started = 0;
         int failed = 0;
@@ -115,9 +158,12 @@ public final class ScheduleFireService {
         int stale = 0;
         for (ClaimedScheduleFire fire : claimed) {
             try {
-                WorkflowExecution execution = executions.start(fire.workflowId(), fire.idempotencyKey());
+                WorkflowExecution execution = executions.start(
+                        fire.tenantId(), fire.workflowId(), fire.idempotencyKey()
+                );
                 if (fires.markStarted(
-                        fire.triggerId(), fire.claimToken(), execution.workflow().id(), clock.instant()
+                        fire.tenantId(), fire.triggerId(), fire.claimToken(),
+                        execution.workflow().id(), clock.instant()
                 )) {
                     started++;
                 } else {
@@ -125,7 +171,8 @@ public final class ScheduleFireService {
                 }
             } catch (WorkflowNotPublishedException permanentFailure) {
                 if (fires.markFailed(
-                        fire.triggerId(), fire.claimToken(), rootMessage(permanentFailure), clock.instant()
+                        fire.tenantId(), fire.triggerId(), fire.claimToken(),
+                        rootMessage(permanentFailure), clock.instant()
                 )) {
                     failed++;
                 } else {
@@ -133,6 +180,7 @@ public final class ScheduleFireService {
                 }
             } catch (RuntimeException transientFailure) {
                 if (fires.release(
+                        fire.tenantId(),
                         fire.triggerId(),
                         fire.claimToken(),
                         rootMessage(transientFailure),
@@ -154,8 +202,8 @@ public final class ScheduleFireService {
                 stale,
                 throttled,
                 materialized.capacityDeferred(),
-                queue.depth(),
-                queue.oldestAge().toMillis()
+                queueDepth,
+                oldestAge.toMillis()
         );
     }
 

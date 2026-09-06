@@ -1,6 +1,6 @@
 # FlowForge
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phases 1-5 establish durable distributed execution and scheduling; Phase 6 is adding correlation-aware observability and measured horizontal-scalability evidence.
+FlowForge is a production-oriented distributed workflow and job orchestration platform. Phases 1-6 establish durable, observable distributed execution; Phase 7 adds security and operational release readiness.
 
 ## Current capabilities
 
@@ -78,8 +78,34 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 - Scope consistent workflow, task, attempt, event, fencing, and Kafka metadata into leak-safe structured log context
 - Accept safe `X-Correlation-Id` request identifiers, generate replacements for unsafe values, and echo the effective ID
 - Emit ECS JSON console logs in production profiles while retaining readable local and test output
+- Trace HTTP, Kafka, scheduled workflow processing, and worker execution with Micrometer and OpenTelemetry
+- Preserve bounded W3C trace and baggage context across PostgreSQL-backed outbox delays and process restarts
+- Keep OTLP export opt-in and independent from workflow transactions and Kafka acknowledgements
+- Expose Prometheus-format application, JVM, HTTP, workflow-throughput, backlog-age, scheduling, and saturation metrics
+- Provision a versioned Grafana operations dashboard and local Prometheus/OpenTelemetry Collector stack
+- Evaluate API-availability and workflow-start error budgets with multi-window burn-rate alerts
+- Alert on durable queue/completion age, outbox stalls, retries, timeouts, dead letters, permit leaks, admission pressure, and dependency loss with linked runbooks
+- Authenticate production API requests as issuer-validated OAuth 2.0 JWT bearer tokens
+- Enforce deny-by-default `VIEWER`, `OPERATOR`, `ADMIN`, and `MONITOR` role boundaries
+- Keep health probes public while protecting metrics and administrative actuator endpoints
+- Return stable problem responses for missing credentials and forbidden operations
+- Derive bounded tenant identity from validated JWT claims while ignoring spoofable tenant headers
+- Backfill durable workflow, execution, and schedule ownership through a versioned tenant-registry migration
+- Persist optimistic-versioned tenant quotas for executions, tasks, schedules, ready queues, and admission rates
+- Enforce tenant capacity through PostgreSQL-authoritative locks across control-plane replicas while treating Redis as a recoverable mirror
+- Administer the authenticated tenant's quota with ETags and stale-writer fencing
+- Reject inline task secrets and carry provider-neutral secret references through PostgreSQL and Kafka without resolved material
+- Resolve secret references only inside workers and redact sensitive handler failures before logs, traces, events, or durable details
+- Record fail-closed, append-only administrative audit attempt/outcome pairs with tenant, actor, action, target, and request identity
+- Query tenant-scoped audit history through an administrator-only API with a configurable online retention window
+- Build provenance-enabled control-plane and worker images from digest-pinned Java 21 bases with deterministic artifact timestamps
+- Run both images as UID/GID 10001 with health checks and no writable application directory
+- Deploy independently scalable control-plane and worker workloads through a versioned Helm chart
+- Protect Kubernetes rollouts with startup/liveness/readiness probes, graceful drains, disruption budgets, resources, and topology spread
+- Enforce restricted pod/container security contexts and source database, Kafka, Redis, OIDC, and trust-store material only from external Secrets
+- Gate pull requests and releases with architecture, security/tenant-isolation, upgrade/rollback, recovery, distributed-integration, manifest, SBOM, vulnerability, smoke, provenance, signing, and attestation checks
 
-Phases 1-5 and Phase 6 Slice 6.1 are complete. Slice 6.2 adds OpenTelemetry tracing and W3C propagation.
+Phases 1-7 are complete. The final same-revision acceptance matrix proves security and tenant isolation, populated-schema upgrade and rollback compatibility, logical restore, named-point WAL/PITR, Redis reconstruction, bounded tenant-safe DLQ replay, the full distributed reactor, deployment manifests, and aggregate SBOM generation. Publication remains an authorized action through the protected release workflow.
 
 ## Prerequisites
 
@@ -87,6 +113,28 @@ Phases 1-5 and Phase 6 Slice 6.1 are complete. Slice 6.2 adds OpenTelemetry trac
 - Rancher Desktop using the Moby engine, or another Docker-compatible runtime
 
 The Maven wrapper downloads the pinned Maven version automatically.
+
+## Build images and render a deployment
+
+Build and inspect both Linux images through the Docker-compatible engine:
+
+```powershell
+.\scripts\build-images.ps1 -Registry flowforge -Tag local
+```
+
+The builder accepts the active JDK truststore as an ephemeral BuildKit secret so
+corporate TLS trust can be used without entering the output image. Production
+credentials and runtime trust are supplied only through Kubernetes Secret
+references. Lint and render the deployment contract with:
+
+```powershell
+helm lint .\deploy\helm\flowforge --strict
+helm template flowforge .\deploy\helm\flowforge --namespace flowforge
+```
+
+See the [Helm deployment guide](deploy/helm/flowforge/README.md) for the required
+external Secret contract, digest-pinned installation, autoscaling constraints,
+rollout verification, and rollback commands.
 
 ## Run locally
 
@@ -101,10 +149,18 @@ Run the control plane in its production Kafka topology:
 ```powershell
 $env:JAVA_HOME = 'C:\path\to\jdk-21'
 $env:SPRING_PROFILES_ACTIVE = 'production'
+$env:FLOWFORGE_SECURITY_ENABLED = 'false' # local development only
 .\mvnw.cmd -pl flowforge-control-plane -am spring-boot:run
 ```
 
-The `production` profile enables Kafka, outbox publication, command dispatch, and result consumption and disables the Phase 2 in-process dispatcher. Startup validation rejects incomplete or competing execution topologies.
+The `production` profile enables Kafka, outbox publication, command dispatch, result consumption, and JWT security, and disables the Phase 2 in-process dispatcher. Startup validation rejects incomplete execution topologies and missing security configuration. The example explicitly disables authentication only for a local topology without an identity provider.
+
+For an authenticated deployment, leave security enabled and configure the trusted issuer and its JWK endpoint:
+
+```powershell
+$env:FLOWFORGE_OIDC_ISSUER_URI = 'https://identity.example.com/realms/flowforge'
+$env:FLOWFORGE_OIDC_JWK_SET_URI = 'https://identity.example.com/realms/flowforge/protocol/openid-connect/certs'
+```
 
 Run a worker in a second terminal (it uses the same local PostgreSQL service by default, with an independent Flyway history table):
 
@@ -113,15 +169,43 @@ $env:SPRING_PROFILES_ACTIVE = 'production'
 .\mvnw.cmd -pl flowforge-worker -am spring-boot:run
 ```
 
+Start the versioned local observability stack:
+
+```powershell
+docker compose --profile observability up -d prometheus grafana otel-collector
+```
+
+Prometheus is available at `http://localhost:9090` and the provisioned FlowForge dashboard at `http://localhost:3000`. The services scrape the control plane and worker from ports `8080` and `8081`. To send sampled traces to the local collector, set `$env:FLOWFORGE_OTLP_ENABLED = 'true'` before starting each application; trace export remains optional and metrics continue to use Prometheus pull semantics.
+
+Validate Prometheus syntax, alert behavior, and the Compose profile with the pinned image:
+
+```powershell
+.\scripts\verify-observability.ps1
+```
+
 Run all tests:
 
 ```powershell
 .\mvnw.cmd verify
 ```
 
+Run the bounded distributed smoke workload after starting the production topology:
+
+```powershell
+.\scripts\run-load-test.ps1 -Profile smoke
+```
+
+Or let the managed runner build, start, measure, reconcile, and clean up a named topology:
+
+```powershell
+.\scripts\run-load-topology.ps1 -Topology balanced-2x2-6p -Profile smoke
+```
+
+The [load-testing guide](load-testing/README.md) documents the smoke, overload, soak, and scheduled profiles, JSON report contract, and threshold exit behavior.
+
 Infrastructure integration tests use PostgreSQL, Kafka, and Redis Testcontainers. They are skipped when a Docker-compatible runtime is unavailable; all other tests still run.
 
-Operational procedures are in the [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md) and [Phase 5 scheduling and coordination runbook](docs/operations/phase-5-scheduling-coordination-runbook.md). The final Phase 5 design is recorded in [ADR-005](docs/adr/005-phase-5-scheduling-and-coordination.md).
+Operational procedures are in the [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md), [Phase 5 scheduling and coordination runbook](docs/operations/phase-5-scheduling-coordination-runbook.md), [Phase 6 SLO and alerting runbook](docs/operations/phase-6-slo-alerting-runbook.md), and [Phase 6 observability/capacity/resilience runbook](docs/operations/phase-6-observability-capacity-resilience-runbook.md). Deployment and rollback are documented in the [Helm deployment guide](deploy/helm/flowforge/README.md). Secret handling, redaction, audit, and retention are defined in the [security policy](docs/security/secret-and-audit-policy.md). The final telemetry and scaling design is recorded in [ADR-006](docs/adr/006-observability-scalability-and-resilience.md).
 
 ## Configuration
 
@@ -133,6 +217,22 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 | `FLOWFORGE_DB_POOL_SIZE` | `10` |
 | `FLOWFORGE_SHUTDOWN_TIMEOUT` | Control plane: `30s`; worker: `70s` |
 | `FLOWFORGE_LOG_FORMAT` | Production profiles: `ecs` |
+| `FLOWFORGE_TRACING_SAMPLING_PROBABILITY` | `0.1` |
+| `FLOWFORGE_OTLP_ENABLED` | `false` |
+| `FLOWFORGE_OTLP_TRACES_ENDPOINT` | `http://localhost:4318/v1/traces` |
+| `FLOWFORGE_PROMETHEUS_ENABLED` | `true` |
+| `FLOWFORGE_SECURITY_ENABLED` | `false`; production profile: `true` |
+| `FLOWFORGE_OIDC_ISSUER_URI` | Required when security is enabled |
+| `FLOWFORGE_OIDC_JWK_SET_URI` | Required when security is enabled |
+| `FLOWFORGE_SECURITY_ROLES_CLAIM` | `roles` |
+| `FLOWFORGE_SECURITY_TENANT_ID_CLAIM` | `tenant_id` |
+| `FLOWFORGE_LOCAL_TENANT_ID` | `local`; used only when security is disabled |
+| `FLOWFORGE_AUDIT_ONLINE_RETENTION` | `365d` |
+| `FLOWFORGE_TENANT_MAX_ACTIVE_EXECUTIONS` | `10000`; inherited when no tenant override exists |
+| `FLOWFORGE_TENANT_MAX_RUNNING_TASKS` | `10000`; inherited when no tenant override exists |
+| `FLOWFORGE_TENANT_MAX_READY_TASKS` | `10000`; inherited when no tenant override exists |
+| `FLOWFORGE_TRACE_MAX_ATTRIBUTES` | `64` |
+| `FLOWFORGE_TRACE_MAX_ATTRIBUTE_VALUE_LENGTH` | `1024` |
 | `FLOWFORGE_REDIS_HOST` | `localhost` |
 | `FLOWFORGE_REDIS_PORT` | `6379` |
 | `FLOWFORGE_REDIS_PASSWORD` | Empty |
@@ -149,6 +249,8 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 | `FLOWFORGE_KAFKA_RECOVERY_BACKOFF_MULTIPLIER` | `2.0` |
 | `FLOWFORGE_KAFKA_RECOVERY_MAX_BACKOFF` | `2s` |
 | `FLOWFORGE_KAFKA_DLQ_PUBLISH_TIMEOUT` | `10s` |
+| `FLOWFORGE_DLQ_REPLAY_TRANSPORT_TIMEOUT` | `10s` |
+| `FLOWFORGE_DLQ_REPLAY_CLAIM_LEASE` | `30s` |
 | `FLOWFORGE_OUTBOX_PUBLISHER_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_OUTBOX_COMMAND_DISPATCH_ENABLED` | `false`; production profile: `true` |
 | `FLOWFORGE_OUTBOX_BATCH_SIZE` | `100` |
@@ -250,6 +352,11 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 | `POST` | `/api/v1/schedules/{id}/pause` | Pause a schedule using `If-Match` |
 | `POST` | `/api/v1/schedules/{id}/resume` | Resume a schedule using `If-Match` |
 | `DELETE` | `/api/v1/schedules/{id}` | Soft-delete a schedule using `If-Match` |
+| `GET` | `/api/v1/tenant/quota` | Read the authenticated tenant's configured or inherited quota |
+| `PUT` | `/api/v1/tenant/quota` | Update the authenticated tenant's quota using `If-Match` |
+| `GET` | `/api/v1/audit-events` | Read paginated tenant audit history; `ADMIN` only |
+| `GET` | `/api/v1/dead-letters/{topic}/partitions/{partition}/offsets/{offset}` | Inspect payload-free metadata and digest for one tenant-owned DLQ record; `ADMIN` only |
+| `POST` | `/api/v1/dead-letters/{topic}/partitions/{partition}/offsets/{offset}/replay` | Idempotently replay one tenant-owned record with an `Idempotency-Key`; `ADMIN` only |
 | `GET` | `/actuator/health` | Health and availability probes |
 
 Mutating an existing workflow requires the strong ETag returned by create/read/update:
@@ -283,6 +390,9 @@ Example request:
       "name": "Process payment",
       "type": "DELAY",
       "configuration": {"durationMs": 100},
+      "secretReferences": {
+        "apiKey": {"provider": "env", "name": "PAYMENT_API_KEY"}
+      },
       "maxConcurrency": 5
     }
   ],
@@ -303,5 +413,6 @@ Example request:
 - `flowforge-kafka-support`: shared bounded-retry, broker-confirmed DLQ publication, metadata, and recovery metrics
 - `flowforge-control-plane`: Spring Boot HTTP, PostgreSQL, transactional-outbox, and Kafka adapters
 - `flowforge-worker`: independently deployable Spring Boot worker process
+- `flowforge-load-test`: packaged Java 21 fan-out/fan-in load generator with thresholded JSON reports
 
-See the [project roadmap](docs/ROADMAP.md), [Phase 5 implementation plan](docs/PHASE_5_PLAN.md), [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md), [ADR-001](docs/adr/001-phase-1-architecture.md), [ADR-002](docs/adr/002-phase-2-execution-architecture.md), [ADR-003](docs/adr/003-phase-3-distributed-execution.md), and [ADR-004](docs/adr/004-phase-4-reliability-and-recovery.md) for phase status, operations, and major design decisions.
+See the [project roadmap](docs/ROADMAP.md), [Phase 7 implementation plan](docs/PHASE_7_PLAN.md), [release acceptance matrix](docs/operations/phase-7-release-acceptance.md), [release pipeline guide](docs/operations/release-pipeline.md), [Phase 7 recovery runbook](docs/operations/phase-7-recovery-runbook.md), [incident and DLQ replay runbook](docs/operations/phase-7-incident-and-dlq-replay-runbook.md), [upgrade and credential-rotation runbook](docs/operations/phase-7-upgrade-and-credential-rotation-runbook.md), [Phase 6 operations runbook](docs/operations/phase-6-observability-capacity-resilience-runbook.md), [resilience evidence](docs/resilience/README.md), and [architecture decisions](docs/adr/) for phase status, operations, and major design decisions.

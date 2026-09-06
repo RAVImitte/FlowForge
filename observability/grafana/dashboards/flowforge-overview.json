@@ -1,0 +1,132 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "type": "stat", "title": "Service targets up", "id": 1,
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "targets": [{"expr": "sum(up{job=~\"flowforge-.*\"})", "refId": "A"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 2}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "type": "stat", "title": "Active workflows", "id": 2,
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "targets": [{"expr": "sum(flowforge_executions_active{environment=~\"$environment\"})", "refId": "A"}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "type": "stat", "title": "Ready tasks", "id": 3,
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "sum(flowforge_tasks_ready{environment=~\"$environment\"})", "refId": "A"}],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "type": "stat", "title": "Oldest ready task", "id": 4,
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "targets": [{"expr": "max(flowforge_tasks_ready_oldest_age_seconds{environment=~\"$environment\"})", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto", "wideLayout": true}
+    },
+    {
+      "type": "timeseries", "title": "Workflow throughput", "id": 5,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "targets": [
+        {"expr": "sum(rate(flowforge_workflows_started_total{environment=~\"$environment\"}[5m]))", "legendFormat": "started", "refId": "A"},
+        {"expr": "sum by (outcome) (rate(flowforge_workflows_completed_total{environment=~\"$environment\"}[5m]))", "legendFormat": "completed {{outcome}}", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "HTTP RED", "id": 6,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "targets": [
+        {"expr": "sum(rate(http_server_requests_seconds_count{environment=~\"$environment\"}[5m]))", "legendFormat": "requests/s", "refId": "A"},
+        {"expr": "sum(rate(http_server_requests_seconds_count{environment=~\"$environment\",status=~\"5..\"}[5m]))", "legendFormat": "5xx/s", "refId": "B"},
+        {"expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{environment=~\"$environment\"}[5m])))", "legendFormat": "p95 seconds", "refId": "C"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "Durable queue depth", "id": 7,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "targets": [
+        {"expr": "sum(flowforge_tasks_ready{environment=~\"$environment\"})", "legendFormat": "ready tasks", "refId": "A"},
+        {"expr": "sum(flowforge_tasks_running{environment=~\"$environment\"})", "legendFormat": "running tasks", "refId": "B"},
+        {"expr": "sum(flowforge_outbox_pending{environment=~\"$environment\"})", "legendFormat": "control outbox", "refId": "C"},
+        {"expr": "sum(flowforge_worker_results_pending{environment=~\"$environment\"})", "legendFormat": "worker result outbox", "refId": "D"},
+        {"expr": "sum(flowforge_worker_commands_processing{environment=~\"$environment\"})", "legendFormat": "worker processing", "refId": "E"}
+      ],
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "Oldest durable work", "id": 8,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "targets": [
+        {"expr": "max(flowforge_tasks_ready_oldest_age_seconds{environment=~\"$environment\"})", "legendFormat": "ready task", "refId": "A"},
+        {"expr": "max(flowforge_outbox_oldest_age_seconds{environment=~\"$environment\"})", "legendFormat": "control outbox", "refId": "B"},
+        {"expr": "max(flowforge_worker_results_oldest_age_seconds{environment=~\"$environment\"})", "legendFormat": "worker result", "refId": "C"},
+        {"expr": "max(flowforge_schedules_pending_current_oldest_age_seconds{environment=~\"$environment\"})", "legendFormat": "schedule trigger", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "Reliability signals", "id": 9,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+      "targets": [
+        {"expr": "sum(rate(flowforge_retries_scheduled_total{environment=~\"$environment\"}[5m]))", "legendFormat": "retries", "refId": "A"},
+        {"expr": "sum(rate(flowforge_retries_exhausted_total{environment=~\"$environment\"}[5m]))", "legendFormat": "exhausted", "refId": "B"},
+        {"expr": "sum(rate(flowforge_timeouts_tasks_total{environment=~\"$environment\"}[5m]))", "legendFormat": "timeouts", "refId": "C"},
+        {"expr": "sum(rate(flowforge_tasks_dead_lettered_total{environment=~\"$environment\"}[5m]))", "legendFormat": "dead-lettered", "refId": "D"},
+        {"expr": "sum(rate(flowforge_outbox_publish_failures_total{environment=~\"$environment\"}[5m]))", "legendFormat": "outbox failures", "refId": "E"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "Scheduling and concurrency", "id": 10,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21},
+      "targets": [
+        {"expr": "sum(flowforge_schedules_pending{environment=~\"$environment\"})", "legendFormat": "pending triggers", "refId": "A"},
+        {"expr": "sum(flowforge_concurrency_permits_active{environment=~\"$environment\"})", "legendFormat": "active permits", "refId": "B"},
+        {"expr": "sum(rate(flowforge_admission_throttled_total{environment=~\"$environment\"}[5m]))", "legendFormat": "throttled/s", "refId": "C"},
+        {"expr": "sum(rate(flowforge_coordination_redis_failures_total{environment=~\"$environment\"}[5m]))", "legendFormat": "redis failures/s", "refId": "D"}
+      ],
+      "fieldConfig": {"defaults": {"min": 0}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "JVM heap", "id": 11,
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
+      "targets": [
+        {"expr": "sum by (application) (jvm_memory_used_bytes{environment=~\"$environment\",area=\"heap\"})", "legendFormat": "{{application}} used", "refId": "A"},
+        {"expr": "sum by (application) (jvm_memory_max_bytes{environment=~\"$environment\",area=\"heap\"})", "legendFormat": "{{application}} max", "refId": "B"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "type": "timeseries", "title": "Process CPU", "id": 12,
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
+      "targets": [{"expr": "process_cpu_usage{environment=~\"$environment\"}", "legendFormat": "{{application}}", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []}, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": ["flowforge", "operations"],
+  "templating": {
+    "list": [
+      {"name": "environment", "label": "Environment", "type": "query", "datasource": {"type": "prometheus", "uid": "flowforge-prometheus"}, "query": {"query": "label_values(flowforge_executions_active, environment)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "definition": "label_values(flowforge_executions_active, environment)", "includeAll": true, "allValue": ".*", "multi": true, "refresh": 1, "current": {"text": "All", "value": ["$__all"]}, "options": []}
+    ]
+  },
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "FlowForge Operations Overview",
+  "uid": "flowforge-overview",
+  "version": 1
+}

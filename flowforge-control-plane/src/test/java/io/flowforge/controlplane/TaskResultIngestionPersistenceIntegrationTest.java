@@ -12,6 +12,7 @@ import io.flowforge.domain.execution.TaskRun;
 import io.flowforge.domain.execution.TaskRunStatus;
 import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRunStatus;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
 import io.flowforge.domain.workflow.WorkflowDefinition;
@@ -100,7 +101,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                         new TaskDependency("JOIN", "RIGHT")
                 )
         );
-        assertThat(taskQueue.enqueueReadyTasks(execution.workflow().id(), 1000, TIME.plusSeconds(1)))
+        assertThat(taskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, execution.workflow().id(), 1000, TIME.plusSeconds(1)
+        ))
                 .isEqualTo(1);
 
         UUID rootEvent = UUID.randomUUID();
@@ -134,12 +137,58 @@ class TaskResultIngestionPersistenceIntegrationTest {
     }
 
     @Test
+    void rejectsAResultWhoseTenantDoesNotOwnTheExecution() throws Exception {
+        WorkflowExecution execution = start(List.of(task("ROOT")), List.of());
+        assertThat(taskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, execution.workflow().id(), 1, TIME.plusSeconds(1)
+        ))
+                .isEqualTo(1);
+        ResultMessage message = result(
+                execution.workflow().id(), "ROOT", UUID.randomUUID(), TaskOutcome.SUCCEEDED
+        );
+        jdbc.sql("""
+                INSERT INTO tenant_registry(tenant_id, display_name, status)
+                VALUES ('merchant-b', 'Merchant B', 'ACTIVE')
+                ON CONFLICT (tenant_id) DO NOTHING
+                """).update();
+        InboundTaskResult foreign = new InboundTaskResult(
+                new TenantId("merchant-b"),
+                message.result().eventId(),
+                message.result().workflowExecutionId(),
+                message.result().taskExecutionId(),
+                message.result().taskKey(),
+                message.result().expectedStateVersion(),
+                message.result().attemptNumber(),
+                message.result().outcome(),
+                message.result().errorCode(),
+                message.result().errorMessage(),
+                message.result().retryable(),
+                message.result().fencingToken()
+        );
+
+        assertThatThrownBy(() -> ingestion.ingest(foreign, message.json(), TIME.plusSeconds(2)))
+                .isInstanceOf(ExecutionConflictException.class)
+                .hasMessageContaining("Unknown task execution");
+        assertThat(jdbc.sql("""
+                SELECT COUNT(*) FROM control_plane_result_inbox WHERE tenant_id = 'merchant-b'
+                """).query(Long.class).single()).isZero();
+        assertThat(task(current(execution.workflow().id()), "ROOT").status())
+                .isEqualTo(TaskRunStatus.RUNNING);
+
+        assertThat(ingestion.ingest(message.result(), message.json(), TIME.plusSeconds(3)))
+                .isEqualTo(TaskResultIngestionOutcome.APPLIED);
+    }
+
+    @Test
     void rollsBackInboxAndStateForStaleOrConflictingResults() throws Exception {
         WorkflowExecution execution = start(List.of(task("ROOT")), List.of());
-        taskQueue.enqueueReadyTasks(execution.workflow().id(), 1000, TIME.plusSeconds(1));
+        taskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, execution.workflow().id(), 1000, TIME.plusSeconds(1)
+        );
         TaskRun root = task(current(execution.workflow().id()), "ROOT");
         UUID staleEventId = UUID.randomUUID();
         InboundTaskResult stale = new InboundTaskResult(
+                TenantId.LOCAL,
                 staleEventId,
                 execution.workflow().id(),
                 root.id(),
@@ -165,6 +214,7 @@ class TaskResultIngestionPersistenceIntegrationTest {
         );
         ingestion.ingest(accepted.result(), accepted.json(), TIME.plusSeconds(3));
         InboundTaskResult reusedId = new InboundTaskResult(
+                TenantId.LOCAL,
                 accepted.result().eventId(),
                 accepted.result().workflowExecutionId(),
                 accepted.result().taskExecutionId(),
@@ -190,7 +240,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 List.of(task("ROOT"), task("CHILD")),
                 List.of(new TaskDependency("CHILD", "ROOT"))
         );
-        taskQueue.enqueueReadyTasks(execution.workflow().id(), 1000, TIME.plusSeconds(1));
+        taskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, execution.workflow().id(), 1000, TIME.plusSeconds(1)
+        );
 
         ResultMessage failure = result(execution.workflow().id(), "ROOT", UUID.randomUUID(), TaskOutcome.FAILED);
         ingestion.ingest(failure.result(), failure.json(), TIME.plusSeconds(2));
@@ -207,8 +259,10 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 List.of(task("ROOT"), task("CHILD")),
                 List.of(new TaskDependency("CHILD", "ROOT"))
         );
-        taskQueue.enqueueReadyTasks(execution.workflow().id(), 1000, TIME.plusSeconds(1));
-        executions.cancel(execution.workflow().id(), TIME.plusSeconds(2));
+        taskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, execution.workflow().id(), 1000, TIME.plusSeconds(1)
+        );
+        executions.cancel(TenantId.LOCAL, execution.workflow().id(), TIME.plusSeconds(2));
 
         ResultMessage result = result(execution.workflow().id(), "ROOT", UUID.randomUUID(), TaskOutcome.SUCCEEDED);
         ingestion.ingest(result.result(), result.json(), TIME.plusSeconds(3));
@@ -225,7 +279,9 @@ class TaskResultIngestionPersistenceIntegrationTest {
                 List.of(task("ROOT"), task("CHILD")),
                 List.of(new TaskDependency("CHILD", "ROOT"))
         );
-        taskQueue.enqueueReadyTasks(execution.workflow().id(), 1000, TIME.plusSeconds(1));
+        taskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, execution.workflow().id(), 1000, TIME.plusSeconds(1)
+        );
         ResultMessage first = result(
                 execution.workflow().id(), "ROOT", UUID.randomUUID(), TaskOutcome.SUCCEEDED
         );
@@ -261,11 +317,13 @@ class TaskResultIngestionPersistenceIntegrationTest {
     }
 
     private WorkflowExecution start(List<TaskDefinition> tasks, List<TaskDependency> dependencies) {
-        WorkflowDefinition created = workflows.create(new WorkflowDraft(
+        WorkflowDefinition created = workflows.create(TenantId.LOCAL, new WorkflowDraft(
                 "Result ingestion test", null, tasks, dependencies
         ));
-        WorkflowDefinition published = workflows.publish(created.id(), created.lockVersion());
-        return executions.start(published.id(), "result-" + UUID.randomUUID(), TIME);
+        WorkflowDefinition published = workflows.publish(
+                TenantId.LOCAL, created.id(), created.lockVersion()
+        );
+        return executions.start(TenantId.LOCAL, published.id(), "result-" + UUID.randomUUID(), TIME);
     }
 
     private ResultMessage result(
@@ -276,6 +334,7 @@ class TaskResultIngestionPersistenceIntegrationTest {
     ) throws Exception {
         TaskRun task = task(current(workflowExecutionId), taskKey);
         InboundTaskResult result = new InboundTaskResult(
+                TenantId.LOCAL,
                 eventId,
                 workflowExecutionId,
                 task.id(),
@@ -315,7 +374,7 @@ class TaskResultIngestionPersistenceIntegrationTest {
     }
 
     private WorkflowExecution current(UUID workflowExecutionId) {
-        return executions.findById(workflowExecutionId).orElseThrow();
+        return executions.findById(TenantId.LOCAL, workflowExecutionId).orElseThrow();
     }
 
     private UUID fencingToken(UUID taskId, int attemptNumber) {

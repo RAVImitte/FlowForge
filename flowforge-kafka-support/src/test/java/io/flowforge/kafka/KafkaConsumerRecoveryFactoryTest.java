@@ -1,6 +1,7 @@
 package io.flowforge.kafka;
 
 import io.flowforge.messaging.FlowForgeTopics;
+import io.flowforge.messaging.FlowForgeHeaders;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class KafkaConsumerRecoveryFactoryTest {
                 FlowForgeTopics.TASK_RESULTS_V1, 2, 41, "workflow", "{broken"
         );
         source.headers().add("flowforge-correlation-id", "workflow".getBytes(StandardCharsets.UTF_8));
+        source.headers().add(FlowForgeHeaders.TENANT_ID, "merchant-a".getBytes(StandardCharsets.UTF_8));
 
         publisher.accept(source, new IllegalArgumentException("invalid payload"));
 
@@ -54,6 +56,7 @@ class KafkaConsumerRecoveryFactoryTest {
         assertThat(header(sent.getValue(), KafkaConsumerRecoveryFactory.DLQ_FAILURE_CLASS_HEADER))
                 .isEqualTo(IllegalArgumentException.class.getName());
         assertThat(header(sent.getValue(), "flowforge-correlation-id")).isEqualTo("workflow");
+        assertThat(header(sent.getValue(), FlowForgeHeaders.TENANT_ID)).isEqualTo("merchant-a");
     }
 
     @Test

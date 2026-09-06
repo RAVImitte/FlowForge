@@ -1,5 +1,7 @@
 package io.flowforge.application.schedule;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -21,20 +23,39 @@ public interface ScheduleFireRepository {
         return materializeDue(limit, Integer.MAX_VALUE, now, misfireThreshold);
     }
 
-    default QueueSnapshot pendingQueue(Instant now) {
-        return QueueSnapshot.empty();
-    }
+    List<TenantId> pendingTenants(Instant now, int limit);
+
+    QueueSnapshot pendingQueue(TenantId tenantId, Instant now);
 
     List<ClaimedScheduleFire> claimPending(
+            TenantId tenantId,
             int limit,
             String claimant,
             Instant now,
             Duration leaseDuration
     );
 
-    boolean markStarted(UUID triggerId, UUID claimToken, UUID workflowExecutionId, Instant now);
+    boolean markStarted(
+            TenantId tenantId,
+            UUID triggerId,
+            UUID claimToken,
+            UUID workflowExecutionId,
+            Instant now
+    );
 
-    boolean markFailed(UUID triggerId, UUID claimToken, String errorMessage, Instant now);
+    boolean markFailed(
+            TenantId tenantId,
+            UUID triggerId,
+            UUID claimToken,
+            String errorMessage,
+            Instant now
+    );
 
-    boolean release(UUID triggerId, UUID claimToken, String errorMessage, Instant availableAt);
+    boolean release(
+            TenantId tenantId,
+            UUID triggerId,
+            UUID claimToken,
+            String errorMessage,
+            Instant availableAt
+    );
 }

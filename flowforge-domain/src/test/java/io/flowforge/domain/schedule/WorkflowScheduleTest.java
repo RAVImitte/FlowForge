@@ -1,5 +1,6 @@
 package io.flowforge.domain.schedule;
 
+import io.flowforge.domain.tenancy.TenantId;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -28,6 +29,7 @@ class WorkflowScheduleTest {
         Instant now = Instant.parse("2026-09-05T12:00:00Z");
         assertThatThrownBy(() -> new WorkflowSchedule(
                 UUID.randomUUID(),
+                TenantId.LOCAL,
                 UUID.randomUUID(),
                 new OneTimeSchedule(now.plusSeconds(60)),
                 MisfirePolicy.SKIP,
@@ -44,6 +46,7 @@ class WorkflowScheduleTest {
         Instant now = Instant.parse("2026-09-05T12:00:00Z");
         WorkflowSchedule completed = new WorkflowSchedule(
                 UUID.randomUUID(),
+                TenantId.LOCAL,
                 UUID.randomUUID(),
                 new OneTimeSchedule(now),
                 MisfirePolicy.FIRE_ONCE,
@@ -57,6 +60,7 @@ class WorkflowScheduleTest {
         assertThat(completed.nextFireAt()).isNull();
         assertThatThrownBy(() -> new WorkflowSchedule(
                 completed.id(),
+                completed.tenantId(),
                 completed.workflowId(),
                 completed.spec(),
                 completed.misfirePolicy(),

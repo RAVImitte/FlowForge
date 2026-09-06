@@ -12,15 +12,19 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
+        allow.auto.create.topics: false
         partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
     listener:
       ack-mode: manual_immediate
+      observation-enabled: true
     producer:
       acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         enable.idempotence: true
+    template:
+      observation-enabled: true
   datasource:
     url: ${FLOWFORGE_WORKER_DB_URL:${FLOWFORGE_DB_URL:jdbc:postgresql://localhost:5432/flowforge}}
     username: ${FLOWFORGE_WORKER_DB_USERNAME:${FLOWFORGE_DB_USERNAME:flowforge}}
@@ -40,10 +44,44 @@ server:
   shutdown: graceful
 
 management:
+  tracing:
+    sampling:
+      probability: ${FLOWFORGE_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      type: w3c
+    baggage:
+      enabled: true
+    export:
+      otlp:
+        enabled: ${FLOWFORGE_OTLP_ENABLED:false}
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${FLOWFORGE_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+      limits:
+        max-attributes: ${FLOWFORGE_TRACE_MAX_ATTRIBUTES:64}
+        max-attribute-value-length: ${FLOWFORGE_TRACE_MAX_ATTRIBUTE_VALUE_LENGTH:1024}
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  prometheus:
+    metrics:
+      export:
+        enabled: ${FLOWFORGE_PROMETHEUS_ENABLED:true}
+        descriptions: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${FLOWFORGE_ENVIRONMENT:local}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       probes:

@@ -1,5 +1,7 @@
 package io.flowforge.application.coordination;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -32,26 +34,33 @@ public final class CoordinationPermitService {
         this.ttlPadding = positiveBounded(ttlPadding, "ttlPadding");
     }
 
-    public Optional<CoordinationPermit> tryAcquire(String resourceKey, String holderId, int limit) {
+    public Optional<CoordinationPermit> tryAcquire(
+            TenantId tenantId,
+            String resourceKey,
+            String holderId,
+            int limit
+    ) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         if (limit < 1 || limit > 100_000) {
             throw new IllegalArgumentException("limit must be between 1 and 100000");
         }
         Instant now = clock.instant();
         Optional<CoordinationPermit> acquired = ledger.tryAcquire(
-                resourceKey, holderId, UUID.randomUUID(), limit, now, leaseDuration
+                tenantId, resourceKey, holderId, UUID.randomUUID(), limit, now, leaseDuration
         );
         acquired.ifPresent(permit -> mirrorAcquire(permit, limit, now));
         return acquired;
     }
 
-    public Optional<CoordinationPermit> renew(UUID token) {
+    public Optional<CoordinationPermit> renew(TenantId tenantId, UUID token) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(token, "token must not be null");
         Instant now = clock.instant();
-        Optional<CoordinationPermit> renewed = ledger.renew(token, now, leaseDuration);
+        Optional<CoordinationPermit> renewed = ledger.renew(tenantId, token, now, leaseDuration);
         renewed.ifPresent(permit -> {
             try {
                 if (!ephemeralStore.renew(permit, now, ttlPadding)) {
-                    reconcile(permit.resourceKey());
+                    reconcile(permit.tenantId(), permit.resourceKey());
                 }
             } catch (RuntimeException unavailable) {
                 observer.degraded("renew");
@@ -63,14 +72,14 @@ public final class CoordinationPermitService {
     public boolean release(CoordinationPermit permit) {
         Objects.requireNonNull(permit, "permit must not be null");
         Instant now = clock.instant();
-        Optional<CoordinationPermit> released = ledger.release(permit.token(), now);
+        Optional<CoordinationPermit> released = ledger.release(permit.tenantId(), permit.token(), now);
         if (released.isEmpty()) return false;
         CoordinationPermit authoritative = released.get();
         try {
             if (!ephemeralStore.release(
-                    authoritative.resourceKey(), authoritative.token(), now, ttlPadding
+                    authoritative.tenantId(), authoritative.resourceKey(), authoritative.token(), now, ttlPadding
             )) {
-                reconcile(authoritative.resourceKey());
+                reconcile(authoritative.tenantId(), authoritative.resourceKey());
             }
         } catch (RuntimeException unavailable) {
             observer.degraded("release");
@@ -78,11 +87,12 @@ public final class CoordinationPermitService {
         return true;
     }
 
-    public int reconcile(String resourceKey) {
+    public int reconcile(TenantId tenantId, String resourceKey) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         Instant now = clock.instant();
-        List<CoordinationPermit> active = ledger.findActive(resourceKey, now);
+        List<CoordinationPermit> active = ledger.findActive(tenantId, resourceKey, now);
         try {
-            ephemeralStore.replace(resourceKey, active, now, ttlPadding);
+            ephemeralStore.replace(tenantId, resourceKey, active, now, ttlPadding);
             observer.reconciled(active.size());
         } catch (RuntimeException unavailable) {
             observer.degraded("reconcile");
@@ -93,7 +103,7 @@ public final class CoordinationPermitService {
     private void mirrorAcquire(CoordinationPermit permit, int limit, Instant now) {
         try {
             if (!ephemeralStore.tryAcquire(permit, limit, now, ttlPadding)) {
-                reconcile(permit.resourceKey());
+                reconcile(permit.tenantId(), permit.resourceKey());
             }
         } catch (RuntimeException unavailable) {
             observer.degraded("acquire");

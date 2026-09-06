@@ -1,5 +1,6 @@
 package io.flowforge.controlplane.adapter.out.messaging;
 
+import io.flowforge.observability.TraceContextSnapshot;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,7 +34,8 @@ public class OutboxMessageRepository {
                       FROM control_plane_outbox
                      WHERE (status = 'PENDING' AND available_at <= :now)
                         OR (status = 'IN_FLIGHT' AND claimed_until <= :now)
-                     ORDER BY created_at, id
+                     ORDER BY CASE WHEN message_kind = 'TASK_COMMAND' THEN 0 ELSE 1 END,
+                              created_at, id
                      FOR UPDATE SKIP LOCKED
                      LIMIT :limit
                 )
@@ -47,10 +49,11 @@ public class OutboxMessageRepository {
                        last_error = NULL
                   FROM candidates
                  WHERE outbox.id = candidates.id
-                RETURNING outbox.id, outbox.workflow_execution_id, outbox.task_execution_id,
+                RETURNING outbox.tenant_id, outbox.id, outbox.workflow_execution_id, outbox.task_execution_id,
                           outbox.message_kind, outbox.topic, outbox.record_key,
                           outbox.event_type, outbox.schema_version, outbox.payload::text,
-                          outbox.attempt_count, outbox.created_at, outbox.claim_token
+                          outbox.attempt_count, outbox.created_at, outbox.claim_token,
+                          outbox.trace_parent, outbox.trace_state, outbox.trace_baggage
                 """)
                 .param("now", timestamp(now))
                 .param("claimedUntil", timestamp(now.plus(leaseDuration)))
@@ -58,6 +61,7 @@ public class OutboxMessageRepository {
                 .param("instanceId", instanceId)
                 .param("claimToken", claimToken)
                 .query((rs, rowNum) -> new OutboxMessage(
+                        rs.getString("tenant_id"),
                         rs.getObject("id", UUID.class),
                         rs.getObject("workflow_execution_id", UUID.class),
                         rs.getObject("task_execution_id", UUID.class),
@@ -69,7 +73,12 @@ public class OutboxMessageRepository {
                         rs.getString("payload"),
                         rs.getInt("attempt_count"),
                         instant(rs.getObject("created_at")),
-                        rs.getObject("claim_token", UUID.class)
+                        rs.getObject("claim_token", UUID.class),
+                        new TraceContextSnapshot(
+                                rs.getString("trace_parent"),
+                                rs.getString("trace_state"),
+                                rs.getString("trace_baggage")
+                        )
                 ))
                 .list();
     }

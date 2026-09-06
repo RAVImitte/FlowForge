@@ -3,6 +3,8 @@ package io.flowforge.controlplane.adapter.in.messaging;
 import io.flowforge.application.execution.InboundTaskHeartbeat;
 import io.flowforge.application.execution.TaskHeartbeatIngestion;
 import io.flowforge.application.execution.TaskHeartbeatIngestionOutcome;
+import io.flowforge.domain.tenancy.TenantId;
+import io.flowforge.kafka.KafkaTenantHeader;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskHeartbeatV1;
@@ -63,6 +65,7 @@ public class TaskHeartbeatConsumer {
             }
             TaskHeartbeatV1 payload = envelope.payload();
             try (LogContext messageContext = LogContext.open(
+                    LogFields.TENANT_ID, envelope.tenantId(),
                     LogFields.CORRELATION_ID, envelope.correlationId(),
                     LogFields.EVENT_ID, envelope.eventId(),
                     LogFields.WORKFLOW_EXECUTION_ID, payload.workflowExecutionId(),
@@ -75,6 +78,7 @@ public class TaskHeartbeatConsumer {
                 try {
                     TaskHeartbeatIngestionOutcome outcome = ingestion.ingest(
                             new InboundTaskHeartbeat(
+                                    new TenantId(envelope.tenantId()),
                                     envelope.eventId(),
                                     payload.workflowExecutionId(),
                                     payload.taskExecutionId(),
@@ -125,6 +129,7 @@ public class TaskHeartbeatConsumer {
                 || envelope.schemaVersion() != TaskHeartbeatV1.SCHEMA_VERSION) {
             throw new IllegalArgumentException("Unsupported task-heartbeat contract version");
         }
+        KafkaTenantHeader.requireMatching(record.headers(), envelope.tenantId());
         if (!envelope.correlationId().equals(envelope.payload().workflowExecutionId())) {
             throw new IllegalArgumentException("Heartbeat correlation ID does not match workflow execution");
         }

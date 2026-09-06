@@ -1,5 +1,6 @@
 package io.flowforge.controlplane;
 
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskCompletion;
@@ -92,7 +93,7 @@ class RetrySchedulingPersistenceIntegrationTest {
                 .extracting(attempt -> attempt.status())
                 .isEqualTo(TaskAttemptStatus.FAILED);
         assertThat(queue.releaseDueRetries(10, TIME.plusSeconds(11))).isZero();
-        assertThat(executions.claimReadyTasks(10, TIME.plusSeconds(11))).isEmpty();
+        assertThat(executions.claimReadyTasks(TenantId.LOCAL, 10, TIME.plusSeconds(11))).isEmpty();
 
         assertThat(queue.releaseDueRetries(10, TIME.plusSeconds(12))).isEqualTo(1);
         TaskWorkItem second = onlyClaim(TIME.plusSeconds(12));
@@ -185,7 +186,7 @@ class RetrySchedulingPersistenceIntegrationTest {
         assertThat(firstReleased + secondReleased).isEqualTo(1);
         TaskWorkItem secondAttempt = onlyClaim(TIME.plusSeconds(3));
         assertThat(secondAttempt.attemptNumber()).isEqualTo(2);
-        assertThat(executions.claimReadyTasks(10, TIME.plusSeconds(3))).isEmpty();
+        assertThat(executions.claimReadyTasks(TenantId.LOCAL, 10, TIME.plusSeconds(3))).isEmpty();
     }
 
     @Test
@@ -195,7 +196,9 @@ class RetrySchedulingPersistenceIntegrationTest {
         for (int index = 0; index < workload; index++) {
             start(retryPolicy(2, Duration.ZERO), "scheduler-batch-race-" + index);
         }
-        List<TaskWorkItem> firstAttempts = executions.claimReadyTasks(workload, TIME.plusSeconds(1));
+        List<TaskWorkItem> firstAttempts = executions.claimReadyTasks(
+                TenantId.LOCAL, workload, TIME.plusSeconds(1)
+        );
         assertThat(firstAttempts).hasSize(workload);
         firstAttempts.forEach(work -> executions.completeTask(
                 TaskCompletion.from(work, TaskResult.retryableFailure("TRANSIENT", "retry")),
@@ -221,7 +224,7 @@ class RetrySchedulingPersistenceIntegrationTest {
 
         assertThat(firstReleased).isEqualTo(batchSize);
         assertThat(secondReleased).isEqualTo(batchSize);
-        assertThat(executions.claimReadyTasks(workload, TIME.plusSeconds(3)))
+        assertThat(executions.claimReadyTasks(TenantId.LOCAL, workload, TIME.plusSeconds(3)))
                 .hasSize(workload)
                 .allSatisfy(work -> assertThat(work.attemptNumber()).isEqualTo(2));
         assertThat(jdbc.sql("""
@@ -232,18 +235,18 @@ class RetrySchedulingPersistenceIntegrationTest {
     }
 
     private WorkflowExecution start(TaskReliabilityPolicy policy, String idempotencyKey) {
-        WorkflowDefinition draft = workflows.create(new WorkflowDraft(
+        WorkflowDefinition draft = workflows.create(TenantId.LOCAL, new WorkflowDraft(
                 "Retry test",
                 null,
                 List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of(), policy)),
                 List.of()
         ));
-        WorkflowDefinition published = workflows.publish(draft.id(), draft.lockVersion());
-        return executions.start(published.id(), idempotencyKey, TIME);
+        WorkflowDefinition published = workflows.publish(TenantId.LOCAL, draft.id(), draft.lockVersion());
+        return executions.start(TenantId.LOCAL, published.id(), idempotencyKey, TIME);
     }
 
     private TaskWorkItem onlyClaim(Instant now) {
-        List<TaskWorkItem> claimed = executions.claimReadyTasks(10, now);
+        List<TaskWorkItem> claimed = executions.claimReadyTasks(TenantId.LOCAL, 10, now);
         assertThat(claimed).hasSize(1);
         return claimed.getFirst();
     }

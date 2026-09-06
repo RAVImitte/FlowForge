@@ -1,0 +1,101 @@
+global:
+  environment: production
+  imageRegistry: ""
+  imagePullSecrets: []
+  # Change to an opaque revision identifier after externally managed credentials rotate.
+  rotationToken: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+secretRefs:
+  database:
+    name: flowforge-database
+    urlKey: url
+    usernameKey: username
+    passwordKey: password
+  kafka:
+    name: flowforge-kafka
+    bootstrapServersKey: bootstrap-servers
+    securityProtocolKey: security-protocol
+    saslMechanismKey: sasl-mechanism
+    saslJaasConfigKey: sasl-jaas-config
+  redis:
+    name: flowforge-redis
+    hostKey: host
+    portKey: port
+    passwordKey: password
+  oidc:
+    name: flowforge-oidc
+    issuerUriKey: issuer-uri
+    jwkSetUriKey: jwk-set-uri
+
+trustStore:
+  enabled: false
+  secretName: flowforge-truststore
+  fileKey: truststore.p12
+  passwordKey: password
+  mountPath: /var/run/secrets/flowforge/trust
+
+controlPlane:
+  replicaCount: 2
+  image:
+    repository: flowforge/control-plane
+    tag: "0.1.0-SNAPSHOT"
+    digest: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 80
+  podAnnotations: {}
+  terminationGracePeriodSeconds: 45
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+worker:
+  replicaCount: 2
+  image:
+    repository: flowforge/worker
+    tag: "0.1.0-SNAPSHOT"
+    digest: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081
+  podAnnotations: {}
+  terminationGracePeriodSeconds: 90
+  concurrency: 4
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70

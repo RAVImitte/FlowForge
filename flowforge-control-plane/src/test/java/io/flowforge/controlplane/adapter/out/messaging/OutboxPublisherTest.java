@@ -1,6 +1,7 @@
 package io.flowforge.controlplane.adapter.out.messaging;
 
 import io.flowforge.controlplane.config.OutboxProperties;
+import io.flowforge.observability.TraceContextSnapshot;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -105,7 +106,7 @@ class OutboxPublisherTest {
         return new OutboxPublisher(
                 repository,
                 sender,
-                new OutboxProperties(100, Duration.ofSeconds(30), Duration.ofSeconds(5), "test-instance"),
+                new OutboxProperties(100, 8, Duration.ofSeconds(30), Duration.ofSeconds(5), "test-instance"),
                 Clock.fixed(NOW, ZoneOffset.UTC),
                 meters
         );
@@ -114,6 +115,7 @@ class OutboxPublisherTest {
     private static OutboxMessage message() {
         UUID workflowId = UUID.randomUUID();
         return new OutboxMessage(
+                "local",
                 UUID.randomUUID(),
                 workflowId,
                 UUID.randomUUID(),
@@ -125,7 +127,8 @@ class OutboxPublisherTest {
                 "{}",
                 1,
                 NOW,
-                CLAIM_TOKEN
+                CLAIM_TOKEN,
+                TraceContextSnapshot.empty()
         );
     }
 }

@@ -4,15 +4,19 @@ import io.flowforge.application.schedule.ScheduleCalculator;
 import io.flowforge.application.schedule.ScheduleRepository;
 import io.flowforge.application.schedule.WorkflowScheduleService;
 import io.flowforge.application.workflow.WorkflowRepository;
+import io.flowforge.controlplane.config.FlowForgeSecurityProperties;
+import io.flowforge.controlplane.config.TenantContextFilter;
 import io.flowforge.domain.schedule.CronSchedule;
 import io.flowforge.domain.schedule.MisfirePolicy;
 import io.flowforge.domain.schedule.ScheduleStatus;
 import io.flowforge.domain.schedule.WorkflowSchedule;
+import io.flowforge.domain.tenancy.TenantId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -22,6 +26,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -42,20 +47,23 @@ class ScheduleControllerTest {
         schedules = mock(ScheduleRepository.class);
         WorkflowRepository workflows = mock(WorkflowRepository.class);
         ScheduleCalculator calculator = mock(ScheduleCalculator.class);
-        when(workflows.findById(WORKFLOW_ID)).thenReturn(Optional.of(mock()));
-        when(workflows.hasPublishedVersion(WORKFLOW_ID)).thenReturn(true);
+        when(workflows.findById(TenantId.LOCAL, WORKFLOW_ID)).thenReturn(Optional.of(mock()));
+        when(workflows.hasPublishedVersion(TenantId.LOCAL, WORKFLOW_ID)).thenReturn(true);
         when(calculator.nextFireAt(any(), any())).thenReturn(NOW.plusSeconds(3600));
         WorkflowScheduleService service = new WorkflowScheduleService(
                 schedules, workflows, calculator, Clock.fixed(NOW, ZoneOffset.UTC)
         );
+        FlowForgeSecurityProperties properties = new FlowForgeSecurityProperties();
+        properties.setEnabled(false);
         mvc = MockMvcBuilders.standaloneSetup(new ScheduleController(service))
                 .setControllerAdvice(new ApiExceptionHandler())
+                .addFilters(new TenantContextFilter(properties, JsonMapper.builder().build()))
                 .build();
     }
 
     @Test
     void createsAZoneAwareCronScheduleWithLocationAndEtag() throws Exception {
-        when(schedules.create(any(), any(), any())).thenReturn(schedule());
+        when(schedules.create(eq(TenantId.LOCAL), any(), any(), any())).thenReturn(schedule());
 
         mvc.perform(post("/api/v1/schedules")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -102,6 +110,7 @@ class ScheduleControllerTest {
     private static WorkflowSchedule schedule() {
         return new WorkflowSchedule(
                 SCHEDULE_ID,
+                TenantId.LOCAL,
                 WORKFLOW_ID,
                 new CronSchedule("0 0 9 * * *", ZoneId.of("Asia/Kolkata")),
                 MisfirePolicy.FIRE_ONCE,

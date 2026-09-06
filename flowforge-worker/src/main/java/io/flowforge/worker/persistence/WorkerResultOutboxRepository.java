@@ -1,5 +1,6 @@
 package io.flowforge.worker.persistence;
 
+import io.flowforge.observability.TraceContextSnapshot;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,9 +47,10 @@ public class WorkerResultOutboxRepository {
                        last_error = NULL
                   FROM candidates
                  WHERE outbox.id = candidates.id
-                RETURNING outbox.id, outbox.workflow_execution_id, outbox.topic,
+                RETURNING outbox.tenant_id, outbox.id, outbox.workflow_execution_id, outbox.topic,
                           outbox.record_key, outbox.event_type, outbox.schema_version,
-                          outbox.payload::text, outbox.attempt_count, outbox.claim_token
+                          outbox.payload::text, outbox.attempt_count, outbox.claim_token,
+                          outbox.trace_parent, outbox.trace_state, outbox.trace_baggage
                 """)
                 .param("now", Timestamp.from(now))
                 .param("claimedUntil", Timestamp.from(now.plus(leaseDuration)))
@@ -56,6 +58,7 @@ public class WorkerResultOutboxRepository {
                 .param("workerId", workerId)
                 .param("claimToken", claimToken)
                 .query((rs, rowNum) -> new WorkerResultMessage(
+                        rs.getString("tenant_id"),
                         rs.getObject("id", UUID.class),
                         rs.getObject("workflow_execution_id", UUID.class),
                         rs.getString("topic"),
@@ -64,7 +67,12 @@ public class WorkerResultOutboxRepository {
                         rs.getInt("schema_version"),
                         rs.getString("payload"),
                         rs.getInt("attempt_count"),
-                        rs.getObject("claim_token", UUID.class)
+                        rs.getObject("claim_token", UUID.class),
+                        new TraceContextSnapshot(
+                                rs.getString("trace_parent"),
+                                rs.getString("trace_state"),
+                                rs.getString("trace_baggage")
+                        )
                 ))
                 .list();
     }

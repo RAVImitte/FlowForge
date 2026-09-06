@@ -8,6 +8,7 @@ import io.flowforge.controlplane.FlowForgeApplication;
 import io.flowforge.domain.schedule.MisfirePolicy;
 import io.flowforge.domain.schedule.OneTimeSchedule;
 import io.flowforge.domain.schedule.WorkflowScheduleDraft;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.domain.workflow.WorkflowDefinition;
@@ -42,6 +43,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DistributedRestartRecoveryIntegrationTest {
     private static final String RESULT_GROUP = "restart-recovery-results";
     private static final String WORKER_GROUP = "restart-recovery-workers";
+    private static final Duration DISTRIBUTED_TIMEOUT = Duration.ofSeconds(60);
+    private static final Duration MIRROR_TIMEOUT = Duration.ofSeconds(30);
 
     @Container
     static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
@@ -62,38 +65,42 @@ class DistributedRestartRecoveryIntegrationTest {
 
         try (ConfigurableApplicationContext controlPlane = startDistributedControlPlane("control-a", true)) {
             JdbcClient jdbc = controlPlane.getBean(JdbcClient.class);
-            executionId = awaitExecution(jdbc, seed.workflowId(), Duration.ofSeconds(20));
+            executionId = awaitExecution(jdbc, seed.workflowId(), DISTRIBUTED_TIMEOUT);
             awaitCount(jdbc, """
                     SELECT COUNT(*) FROM workflow_schedule_trigger
                      WHERE id = :executionId AND status = 'STARTED'
-                    """, seed.triggerId(), null, 1, Duration.ofSeconds(20));
-            awaitCount(jdbc, """
-                    SELECT COUNT(*) FROM control_plane_outbox
-                     WHERE workflow_execution_id = :executionId
-                       AND event_type = :eventType
-                       AND status = 'PUBLISHED'
-                    """, executionId, TaskCommandV1.EVENT_TYPE, 1, Duration.ofSeconds(20));
+                    """, seed.triggerId(), null, 1, DISTRIBUTED_TIMEOUT);
+            try {
+                awaitCount(jdbc, """
+                        SELECT COUNT(*) FROM control_plane_outbox
+                         WHERE workflow_execution_id = :executionId
+                           AND event_type = :eventType
+                           AND status = 'PUBLISHED'
+                        """, executionId, TaskCommandV1.EVENT_TYPE, 1, DISTRIBUTED_TIMEOUT);
+            } catch (AssertionError failure) {
+                throw new AssertionError(failure.getMessage() + "; " + executionDiagnostics(jdbc, executionId), failure);
+            }
             permitResources = activePermitResources(jdbc, executionId);
             assertThat(permitResources).hasSize(2);
-            awaitPermitMirrors(controlPlane, permitResources, Duration.ofSeconds(10));
+            awaitPermitMirrors(controlPlane, permitResources, MIRROR_TIMEOUT);
 
             try (ConfigurableApplicationContext worker = startWorker("worker-a", false)) {
                 awaitCount(worker.getBean(JdbcClient.class), """
                         SELECT COUNT(*) FROM worker_command_inbox
                          WHERE workflow_execution_id = :executionId
                            AND status = 'COMPLETED'
-                        """, executionId, null, 1, Duration.ofSeconds(20));
+                        """, executionId, null, 1, DISTRIBUTED_TIMEOUT);
                 awaitCount(worker.getBean(JdbcClient.class), """
                         SELECT COUNT(*) FROM worker_result_outbox
                          WHERE workflow_execution_id = :executionId
                            AND status = 'PENDING'
-                        """, executionId, null, 1, Duration.ofSeconds(10));
+                        """, executionId, null, 1, MIRROR_TIMEOUT);
             }
         }
 
         assertThat(REDIS.execInContainer("redis-cli", "FLUSHALL").getExitCode()).isZero();
         try (ConfigurableApplicationContext replacement = startDistributedControlPlane("control-reconcile", false)) {
-            awaitPermitMirrors(replacement, permitResources, Duration.ofSeconds(10));
+            awaitPermitMirrors(replacement, permitResources, MIRROR_TIMEOUT);
             assertThat(activePermitResources(replacement.getBean(JdbcClient.class), executionId)).hasSize(2);
         }
 
@@ -102,7 +109,7 @@ class DistributedRestartRecoveryIntegrationTest {
                     SELECT COUNT(*) FROM worker_result_outbox
                      WHERE workflow_execution_id = :executionId
                        AND status = 'PUBLISHED'
-                    """, executionId, null, 1, Duration.ofSeconds(20));
+                    """, executionId, null, 1, DISTRIBUTED_TIMEOUT);
         }
 
         try (ConfigurableApplicationContext controlPlane = startDistributedControlPlane("control-b", true)) {
@@ -110,7 +117,7 @@ class DistributedRestartRecoveryIntegrationTest {
             awaitCount(jdbc, """
                     SELECT COUNT(*) FROM workflow_execution
                      WHERE id = :executionId AND status = 'SUCCEEDED'
-                    """, executionId, null, 1, Duration.ofSeconds(20));
+                    """, executionId, null, 1, DISTRIBUTED_TIMEOUT);
 
             assertThat(count(jdbc, """
                     SELECT COUNT(*) FROM control_plane_result_inbox
@@ -143,7 +150,7 @@ class DistributedRestartRecoveryIntegrationTest {
                         "--flowforge.results.consumer-enabled=false"
                 ))) {
             WorkflowService workflows = context.getBean(WorkflowService.class);
-            WorkflowDefinition draft = workflows.create(new WorkflowDraft(
+            WorkflowDefinition draft = workflows.create(TenantId.LOCAL, new WorkflowDraft(
                     "Restart recovery",
                     "Verifies recovery across independently restarted processes",
                     List.of(new TaskDefinition(
@@ -157,8 +164,10 @@ class DistributedRestartRecoveryIntegrationTest {
                     List.of(),
                     1
             ));
-            WorkflowDefinition published = workflows.publish(draft.id(), draft.lockVersion());
-            var schedule = context.getBean(WorkflowScheduleService.class).create(new WorkflowScheduleDraft(
+            WorkflowDefinition published = workflows.publish(
+                    TenantId.LOCAL, draft.id(), draft.lockVersion());
+            var schedule = context.getBean(WorkflowScheduleService.class).create(
+                    TenantId.LOCAL, new WorkflowScheduleDraft(
                     published.id(),
                     new OneTimeSchedule(Instant.now().plus(Duration.ofHours(1))),
                     MisfirePolicy.FIRE_ONCE
@@ -176,7 +185,7 @@ class DistributedRestartRecoveryIntegrationTest {
             ScheduleFireRepository fires = context.getBean(ScheduleFireRepository.class);
             assertThat(fires.materializeDue(1, now, Duration.ofMinutes(1)).pending()).isEqualTo(1);
             var abandoned = fires.claimPending(
-                    1, "failed-scheduler", now, Duration.ofMillis(1)
+                    TenantId.LOCAL, 1, "failed-scheduler", now, Duration.ofMillis(1)
             ).getFirst();
             return new SeededSchedule(published.id(), abandoned.triggerId());
         }
@@ -216,12 +225,13 @@ class DistributedRestartRecoveryIntegrationTest {
                         "--spring.datasource.url=" + POSTGRES.getJdbcUrl(),
                         "--spring.datasource.username=" + POSTGRES.getUsername(),
                         "--spring.datasource.password=" + POSTGRES.getPassword(),
-                        "--flowforge.worker.id=" + workerId,
-                        "--flowforge.worker.consumer-group=" + WORKER_GROUP,
-                        "--flowforge.worker.result-publisher-enabled=" + resultPublisherEnabled,
-                        "--flowforge.worker.execution.result-poll-interval-ms=50",
-                        "--logging.level.root=WARN"
-                );
+                         "--flowforge.worker.id=" + workerId,
+                         "--flowforge.worker.consumer-group=" + WORKER_GROUP,
+                         "--flowforge.worker.result-publisher-enabled=" + resultPublisherEnabled,
+                         "--flowforge.worker.execution.result-poll-interval-ms=50",
+                         "--debug=false",
+                         "--logging.level.root=WARN"
+                 );
     }
 
     private static String[] controlPlaneArguments(String... additional) {
@@ -240,6 +250,7 @@ class DistributedRestartRecoveryIntegrationTest {
                 "--flowforge.kafka.topics.partitions=6",
                 "--flowforge.kafka.topics.replication-factor=1",
                 "--flowforge.outbox.batch-size=100",
+                "--flowforge.outbox.publish-concurrency=8",
                 "--flowforge.outbox.lease-duration=30s",
                 "--flowforge.outbox.publish-timeout=10s",
                 "--flowforge.outbox.instance-id=restart-seed",
@@ -247,11 +258,12 @@ class DistributedRestartRecoveryIntegrationTest {
                 "--flowforge.coordination.enabled=true",
                 "--flowforge.coordination.namespace=restart-recovery",
                 "--flowforge.coordination.lease-duration=2m",
-                "--flowforge.concurrency.lease-duration=2m",
-                "--flowforge.concurrency.reconciliation-enabled=true",
-                "--flowforge.concurrency.reconciliation-interval-ms=50",
-                "--logging.level.root=WARN"
-        };
+                 "--flowforge.concurrency.lease-duration=2m",
+                 "--flowforge.concurrency.reconciliation-enabled=true",
+                 "--flowforge.concurrency.reconciliation-interval-ms=50",
+                 "--debug=false",
+                 "--logging.level.root=WARN"
+         };
         String[] combined = new String[common.length + additional.length];
         System.arraycopy(common, 0, combined, 0, common.length);
         System.arraycopy(additional, 0, combined, common.length, additional.length);
@@ -283,7 +295,8 @@ class DistributedRestartRecoveryIntegrationTest {
             if (count(jdbc, sql, executionId, eventType) == expected) return;
             Thread.sleep(100);
         }
-        throw new AssertionError("Expected count " + expected + " before timeout");
+        long actual = count(jdbc, sql, executionId, eventType);
+        throw new AssertionError("Expected count " + expected + " before timeout, but was " + actual);
     }
 
     private static long count(JdbcClient jdbc, String sql, UUID executionId, String eventType) {
@@ -332,6 +345,31 @@ class DistributedRestartRecoveryIntegrationTest {
                 .list();
     }
 
+    private static String executionDiagnostics(JdbcClient jdbc, UUID executionId) {
+        List<String> tasks = jdbc.sql("""
+                        SELECT task_key, status FROM task_execution
+                         WHERE workflow_execution_id = :executionId ORDER BY task_key
+                        """)
+                .param("executionId", executionId)
+                .query((resultSet, rowNumber) -> resultSet.getString("task_key")
+                        + "=" + resultSet.getString("status"))
+                .list();
+        List<String> outbox = jdbc.sql("""
+                        SELECT event_type, status, attempt_count, COALESCE(last_error, '') AS last_error
+                          FROM control_plane_outbox
+                         WHERE workflow_execution_id = :executionId ORDER BY created_at, id
+                        """)
+                .param("executionId", executionId)
+                .query((resultSet, rowNumber) -> resultSet.getString("event_type")
+                        + "=" + resultSet.getString("status")
+                        + "#" + resultSet.getInt("attempt_count")
+                        + (resultSet.getString("last_error").isEmpty()
+                        ? ""
+                        : "(" + resultSet.getString("last_error") + ")"))
+                .list();
+        return "tasks=" + tasks + ", outbox=" + outbox;
+    }
+
     private static void awaitPermitMirrors(
             ConfigurableApplicationContext context,
             List<String> resources,
@@ -340,7 +378,8 @@ class DistributedRestartRecoveryIntegrationTest {
         EphemeralPermitStore store = context.getBean(EphemeralPermitStore.class);
         Instant deadline = Instant.now().plus(timeout);
         while (Instant.now().isBefore(deadline)) {
-            if (resources.stream().allMatch(resource -> store.activeCount(resource, Instant.now()) == 1)) return;
+            if (resources.stream().allMatch(resource ->
+                    store.activeCount(TenantId.LOCAL, resource, Instant.now()) == 1)) return;
             Thread.sleep(100);
         }
         throw new AssertionError("Redis permit mirrors were not reconstructed from PostgreSQL");

@@ -1,5 +1,7 @@
 package io.flowforge.worker.messaging;
 
+import io.flowforge.kafka.KafkaTenantHeader;
+import io.flowforge.messaging.FlowForgeHeaders;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
@@ -60,20 +62,20 @@ public class WorkerHeartbeatPublisher {
         this.interval = interval;
     }
 
-    public HeartbeatHandle start(TaskCommandV1 command) {
+    public HeartbeatHandle start(String tenantId, TaskCommandV1 command) {
         if (command.fencingToken() == null) return NO_HEARTBEAT;
-        publish(command);
         ScheduledFuture<?> future = scheduler.scheduleAtFixedRate(
-                () -> publish(command),
-                interval.toMillis(),
+                () -> publish(tenantId, command),
+                0,
                 interval.toMillis(),
                 TimeUnit.MILLISECONDS
         );
         return () -> future.cancel(false);
     }
 
-    private void publish(TaskCommandV1 command) {
+    private void publish(String tenantId, TaskCommandV1 command) {
         try (LogContext commandContext = LogContext.open(
+                LogFields.TENANT_ID, tenantId,
                 LogFields.CORRELATION_ID, command.workflowExecutionId(),
                 LogFields.WORKFLOW_EXECUTION_ID, command.workflowExecutionId(),
                 LogFields.TASK_EXECUTION_ID, command.taskExecutionId(),
@@ -91,6 +93,7 @@ public class WorkerHeartbeatPublisher {
                         TaskHeartbeatV1.SCHEMA_VERSION,
                         now,
                         command.workflowExecutionId(),
+                        tenantId,
                         new TaskHeartbeatV1(
                                 command.workflowExecutionId(),
                                 command.taskExecutionId(),
@@ -105,12 +108,14 @@ public class WorkerHeartbeatPublisher {
                         command.taskExecutionId().toString(),
                         objectMapper.writeValueAsString(envelope)
                 );
-                addHeader(record, "flowforge-event-id", envelope.eventId().toString());
-                addHeader(record, "flowforge-event-type", envelope.eventType());
-                addHeader(record, "flowforge-schema-version", Integer.toString(envelope.schemaVersion()));
-                addHeader(record, "flowforge-correlation-id", envelope.correlationId().toString());
+                addHeader(record, FlowForgeHeaders.EVENT_ID, envelope.eventId().toString());
+                addHeader(record, FlowForgeHeaders.EVENT_TYPE, envelope.eventType());
+                addHeader(record, FlowForgeHeaders.SCHEMA_VERSION, Integer.toString(envelope.schemaVersion()));
+                addHeader(record, FlowForgeHeaders.CORRELATION_ID, envelope.correlationId().toString());
+                KafkaTenantHeader.add(record.headers(), tenantId);
                 kafka.send(record).whenComplete((result, failure) -> {
                     try (LogContext eventContext = LogContext.open(
+                            LogFields.TENANT_ID, tenantId,
                             LogFields.CORRELATION_ID, command.workflowExecutionId(),
                             LogFields.EVENT_ID, envelope.eventId(),
                             LogFields.WORKFLOW_EXECUTION_ID, command.workflowExecutionId(),

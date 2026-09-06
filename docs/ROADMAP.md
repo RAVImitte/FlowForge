@@ -17,8 +17,8 @@ This document is the canonical implementation-status tracker for FlowForge. Upda
 | Phase 3 | COMPLETED | Kafka messaging, transactional outbox, and distributed workers |
 | Phase 4 | COMPLETED | Retries, timeouts, dead-letter queues, and failure recovery |
 | Phase 5 | COMPLETED | Durable scheduling, Redis coordination, and backpressure |
-| Phase 6 | IN PROGRESS | Observability, scalability validation, and resilience testing |
-| Phase 7 | PLANNED | Security, delivery automation, and operational readiness |
+| Phase 6 | COMPLETED | Observability, scalability validation, and resilience testing |
+| Phase 7 | COMPLETED | Security, delivery automation, and operational readiness |
 
 ## Phase 1: Foundation and workflow definitions
 
@@ -292,11 +292,11 @@ Planned scope:
 
 ## Phase 6: Observability and horizontal scalability
 
-Status: **IN PROGRESS**
+Status: **COMPLETED**
 
-Completed milestones: **Slice 6.1 - Correlation-aware structured logging**
+Completed milestones: **Slices 6.1-6.6c - Observability, measured scalability, resilience, and operations closeout**
 
-Next milestone: **Slice 6.2 - OpenTelemetry tracing and propagation**
+Next milestone: **Phase 7 planning - Security and operational readiness**
 
 Detailed implementation plan: [Phase 6 plan](PHASE_6_PLAN.md)
 
@@ -308,32 +308,147 @@ Completed capabilities:
 - Durable outbox and asynchronous heartbeat publication context across control-plane and worker threads
 - Production-only ECS JSON console output through Spring Boot native structured logging
 - Context restoration, injection resistance, consumer correlation, and production-profile tests
+- Micrometer/OpenTelemetry tracing for HTTP, Kafka, scheduled processing, and worker execution
+- Bounded W3C `traceparent`, `tracestate`, and `baggage` persisted across both durable outboxes
+- Configurable sampling and opt-in OTLP trace export that remains outside delivery correctness paths
+- PostgreSQL/Kafka integration tests proving stable command and result trace propagation
+- Prometheus scrape endpoints with service/environment tags and HTTP latency histograms
+- Durable workflow throughput counters and current queue, age, schedule, permit, and worker backlog gauges
+- Versioned Grafana operations dashboard plus provisioned Prometheus and OpenTelemetry Collector Compose services
+- Automated metric semantics, cardinality, dashboard, and provisioning contract tests
+- Initial 30-day API availability, workflow-start latency, ready-queue age, and terminal-completion objectives
+- Seven-window SLI recording rules with multi-window fast-burn pages and sustained-budget tickets
+- Actionable symptom alerts for outboxes, schedules, retries, timeouts, DLQs, permits, admission, dependencies, and rule health
+- Versioned SLO/alert runbook, repository contract tests, and pinned `promtool` syntax and behavior validation
+- Java 21 paced load generator for API-started and scheduled fan-out/fan-in workflows
+- Bounded smoke, overload, soak, and scheduled profiles with thresholded machine-readable JSON reports
+- Versioned single-node, two-worker, and balanced two-control-plane/two-worker load topologies
+- Deterministic process/container orchestration with health gates, Kafka partition validation, explicit volume-reset safety, and failure-path cleanup
+- Combined reports with host/JVM/Docker/Git metadata, Prometheus resource/backlog counters, PostgreSQL probes, Kafka lag/ownership, durable reconciliation, and per-replica useful-work deltas
+- Isolated 11-scenario capacity matrix with curated baseline, horizontal, partition/pool-bound, overload, scheduled, and sustained-soak evidence
+- Readiness-gated topic provisioning and outbound-producer warm-up that prevent cold-start lease loss and accidental one-partition topic creation
+- Priority-aware, bounded-concurrent durable outbox publication with preserved claim fencing and replay semantics
+- Measured safe operating envelope, first bottleneck, scaling limits, uncertain-overload behavior, and tuning sequence
+- Bounded, auto-restoring PostgreSQL and Kafka fault injection with timestamped, redacted machine-readable evidence
+- Retry-capable resilience workloads, dependency-tolerant probes, exact durable reconciliation, and bounded suppressed-redelivery checks
+- PostgreSQL-authoritative concurrency evidence through Redis pause, full state flush, and automatic mirror reconstruction
+- Telemetry-backend interruption evidence with recovered Prometheus targets and post-restoration OTLP trace export
+- Consolidated observability, dashboard, capacity, telemetry, and dependency-recovery operating procedures
+- ADR-006 decision record for fail-open telemetry, metric cardinality, durable trace context, and evidence-based scaling
+- Required-pass four-scenario resilience matrix with isolated state, deterministic cleanup, redacted evidence, and aggregate reporting
 
 Verification notes:
 
-- The complete Maven reactor succeeds across 59 suites with 182 tests passing and no failures, errors, or skipped tests.
+- The complete Maven reactor succeeds across 68 suites with 211 tests passing and no failures, errors, or skipped tests.
 - Request and consumer tests verify unsafe correlation values are replaced and MDC state is cleared or restored after processing.
 - Publisher tests verify existing outbox recovery semantics remain intact with scoped structured context.
+- The distributed restart test verifies initial tasks cannot bypass the Kafka command path through eager local dispatch.
+- A live Rancher Desktop smoke test verifies both Prometheus scrape endpoints, three healthy Prometheus targets, collector startup, and Grafana dashboard provisioning.
+- A live Rancher Desktop Prometheus load verifies all 33 recording and alerting rules evaluate healthy.
+- A live distributed smoke profile completes 25 of 25 six-task workflows with no errors and records 416.657 ms start p95 and 21.763 second terminal-completion p95.
+- Managed single-node smoke evidence completes 25 of 25 workflows and 150 tasks with zero duplicates or scrape errors and exact durable reconciliation.
+- Managed two-worker smoke evidence distributes 150 completed commands as 74/76 with zero duplicates; the final balanced two-by-two acceptance run distributes commands as 77/73 and consumed results as 48/102 while all 25 workflows succeed and Kafka ownership remains observable.
+- Independent five-second PostgreSQL and Kafka pauses each complete 10 of 10 workflows with zero durable failures; recovery upper bounds are 20 and 22 seconds, and Kafka safely suppresses eight redeliveries.
+- Redis pause and state loss complete 10 of 10 workflows with zero permit-limit violations; the ephemeral mirror is reconstructed from PostgreSQL-authoritative permits.
+- Simultaneous Prometheus and collector pauses complete 10 of 10 workflows; both scrape targets recover and 11 trace batches export after restoration.
+- The required closeout matrix passes all four PostgreSQL, Kafka, Redis, and telemetry scenarios with zero durable workflow failures.
+- Repository contract tests cover the final operations runbook, ADR-006 boundaries, resilience manifest, curation, and required-pass semantics.
 
-Remaining scope:
+Phase boundary:
 
-- OpenTelemetry traces across API, Kafka, orchestrator, scheduler, and worker boundaries
-- Micrometer metrics and Prometheus/Grafana dashboards
-- Queue-latency, retry, timeout, saturation, and DLQ alerts
-- Multi-instance load and soak testing
-- Documented partitioning and capacity model
-- Resilience tests for dependency and infrastructure outages
+- Phases 1-7 are complete. FlowForge now has a tested distributed runtime plus security, tenancy, secret handling, audit, deployment, delivery automation, logical/physical recovery, rollback compatibility, credential rotation, tenant-safe DLQ replay, and a same-revision release acceptance boundary.
 
 ## Phase 7: Security and operational readiness
 
-Status: **PLANNED**
+Status: **COMPLETED**
 
-Planned scope:
+Completed milestones: **Slices 7.1-7.6.4 - Security and tenancy through operational release closeout**
 
-- Authentication and role-based authorization
-- Namespace or tenant isolation
-- Secret-reference handling and sensitive-data redaction
-- Audit logging and retention policies
-- Container images and deployment manifests
-- CI/CD quality and security gates
-- Backup, restore, upgrade, incident, and DLQ runbooks
+Next milestone: **Reviewed release-candidate commit and protected publication when authorized**
+
+Detailed implementation plan: [Phase 7 plan](PHASE_7_PLAN.md)
+
+Completed capabilities:
+
+- Stateless OAuth 2.0 JWT bearer authentication with explicit issuer and JWK-set trust configuration
+- Deny-by-default HTTP authorization with bounded viewer, operator, administrator, and monitoring roles
+- Public health probes, protected metrics, and administrator-only operational endpoints
+- Stable authentication/authorization problem responses that do not expose security internals
+- Local opt-out for identity-provider-free development and fail-closed production startup requirements
+- Strict tenant identifiers derived only from validated JWT claims, with header spoofing rejected by construction
+- Leak-safe request/log tenant context and an explicit security-disabled local tenant
+- V13 tenant registry and indexed ownership roots for workflows, executions, and schedules
+- Populated-schema V12-to-V13 migration verification with backward-compatible ownership backfill
+- Tenant-aware workflow aggregate, API, service, and repository contracts
+- Explicit workflow ownership writes and tenant predicates across workflow CRUD, publish, and archive operations
+- PostgreSQL verification that cross-tenant workflow identifiers return not found and cannot mutate state
+- Tenant-aware execution aggregate, API, application service, and repository contracts
+- Tenant-scoped execution admission, idempotency replay, lookup, cancellation, and published-workflow validation
+- V14 composite ownership constraints preventing executions from referencing workflows owned by another tenant
+- PostgreSQL verification that cross-tenant execution identifiers and idempotency keys cannot observe or mutate foreign state
+- Tenant-aware message envelopes and exact Kafka tenant-header validation across commands, results, and heartbeats
+- V15 control-plane ownership for execution events, inboxes, and outboxes, plus V3 worker ownership for command deduplication and result publication
+- PostgreSQL and Kafka verification that result ingestion, duplicate event IDs, worker recovery, and dead-letter records remain isolated by tenant
+- Tenant-owned schedules, trigger leases, task queues, concurrency permits, rate buckets, and Redis coordination keyspaces
+- V16 schedule and coordination ownership constraints, tenant-scoped capacity locks, and removal of transitional durable-root tenant defaults
+- PostgreSQL and Redis verification that schedule admission, lease fencing, coordination capacity, and recovery remain isolated across tenants
+- Versioned per-tenant active-execution, running-task, ready-task, pending-schedule, and token-bucket quotas with inherited deployment defaults
+- Tenant-context-only quota administration with optimistic ETags and stale-writer fencing
+- PostgreSQL-authoritative quota enforcement across replicas, with independent cross-tenant capacity and Redis-loss recovery verification
+- Provider-neutral task secret references persisted and transported without resolved material, with worker-only provider resolution
+- Recursive inline-secret rejection and worker failure redaction before logs, observations, events, or durable details
+- PostgreSQL-enforced append-only administrative audit attempt/outcome pairs with fail-closed mutation admission
+- Tenant-scoped administrator audit history and a documented, configurable online retention and immutable archival policy
+- Digest-pinned, provenance-enabled, deterministic multi-stage images for independently deployable control-plane and worker runtimes
+- Non-root UID/GID 10001 images with container-aware memory policy, application liveness checks, and runtime-only Java 21 layers
+- Windows-safe image automation with Git-derived timestamps/OCI metadata, optional registry push, and non-root output validation
+- Versioned Helm packaging for independent control-plane/worker scaling, Services, disruption budgets, and optional stabilized HPAs
+- Zero-unavailable rollouts with graceful drain windows, startup/liveness/readiness probes, explicit resources, and host/zone topology spread
+- Restricted Kubernetes security contexts with read-only roots, dropped capabilities, RuntimeDefault seccomp, and disabled service-account token mounts
+- External Secret references for PostgreSQL, Kafka SASL, Redis, OIDC, image pulls, and optional PKCS12 runtime trust material
+- Pull-request and main-branch CI gates for fast tests, architecture boundaries, populated-schema upgrades, the complete distributed reactor, Helm/Kubernetes manifests, dependencies, SBOMs, image builds, and fixed HIGH/CRITICAL vulnerabilities
+- Cross-platform local quality-gate automation mirroring the CI boundaries
+- Manually approved releases with semantic-version validation, bounded distributed smoke acceptance, immutable image digests, registry-attached provenance and SBOMs, and protected-key Cosign signatures and attestations
+- Full-commit pinning for every third-party GitHub Action plus executable delivery-pipeline contract tests
+- Digest-pinned Ubuntu Noble JRE runtime images and embedded Tomcat 11.0.25 with clean fixed HIGH/CRITICAL Trivy scans
+- Transaction-consistent PostgreSQL custom-format backup and isolated transactional-restore proof over populated multi-tenant workflow state
+- Recovery-point table-count reconciliation, Flyway validation, tenant/audit invariant verification, and post-snapshot cutoff evidence
+- Independent CI/release recovery gate combining PostgreSQL restoration with Redis reconstruction from durable permits and rate buckets
+- Conservative recovery runbook defining encrypted backup evidence, clean Redis reconstruction, Kafka recovery-point isolation, abort conditions, and approval records
+- Physical PostgreSQL recovery proof with verified base-backup manifests, continuous WAL archival, a named restore point, post-boundary exclusion, and promotion to a new timeline
+- Explicit forward-only schema policy backed by a V17-application-on-V18-schema compatibility test
+- Restart-driven credential and trust rotation through external Secrets and a non-sensitive Helm pod-template revision
+- Provider-specific database, Kafka, Redis, OIDC/JWKS, trust-store, registry, and signing-key rotation procedures
+- Administrator-only, tenant-bound single-record DLQ inspection and replay with foreign records hidden as not found
+- Payload-free DLQ inspection evidence, fixed source-topic allowlisting, same-partition publication, stable-header preservation, and DLQ-header removal
+- Durable PostgreSQL replay claims with idempotency-key and source-location uniqueness, bounded leases, Kafka acknowledgement, and explicit at-least-once ambiguity
+- Incident containment, approval, abort, reconciliation, monitoring, and payload-free evidence procedures backed by executable repository contracts
+- Independent Security and Upgrade gates mirrored across local automation, pull-request CI, and the protected release workflow
+- Fail-fast same-revision release acceptance covering security, upgrade, recovery, the full reactor, deployment manifests, and the aggregate SBOM
+- ADR-007 security, tenancy, durable-authority, recovery, artifact-trust, and protected-publication boundaries
+
+Verification notes:
+
+- Security contract tests cover anonymous rejection, role boundaries, public probes, protected metrics, role-claim normalization, and required trust configuration.
+- The complete Maven reactor succeeds across 70 suites with 220 tests passing and no failures, errors, or skipped tests.
+- After the tenant foundation, the complete reactor succeeds across 73 suites with 228 tests passing and no failures, errors, or skipped tests.
+- After workflow-definition tenant isolation, the complete reactor succeeds across 72 suites with 226 tests passing and no failures, errors, or skipped tests.
+- After execution ownership and API isolation, the complete reactor succeeds across 72 suites with 227 tests passing and no failures, errors, or skipped tests.
+- After event and messaging tenant propagation, the complete reactor succeeds across 73 suites with 232 tests passing and no failures, errors, or skipped tests.
+- After schedule and coordination isolation, the complete reactor succeeds across 73 suites with 235 tests passing and no failures, errors, or skipped tests.
+- After distributed tenant quotas, the complete reactor succeeds across 76 suites with 244 tests passing and no failures, errors, or skipped tests.
+- After secret references, redaction, and security auditing, the complete reactor succeeds across 84 suites with 257 tests passing and no failures, errors, or skipped tests.
+- After container and Helm deployment packaging, the complete reactor succeeds across 85 suites with 260 tests passing and no failures, errors, or skipped tests.
+- Strict Helm lint, optional-path rendering, and Kubernetes client schema validation pass; both images build on Rancher Desktop and run read-only as UID/GID 10001 on Java 21.0.12.
+- After delivery automation and vulnerability remediation, the complete Rancher Desktop-backed reactor succeeds across 86 suites with 264 tests passing and no failures, errors, or skipped tests.
+- The final release smoke profile completes 25 of 25 workflows in 26.098 seconds with zero errors, exact durable reconciliation, 438.464 ms start p95, 13.704 second completion p95, and no duplicate worker commands.
+- The aggregate CycloneDX 1.6 SBOM contains 156 runtime components and both final images have zero fixed HIGH/CRITICAL Trivy findings.
+- The first Slice 7.6 recovery increment restores a populated snapshot into an isolated PostgreSQL database, validates all 19 migrations and every public table count, rejects post-snapshot data, and re-enforces tenant and append-only audit constraints.
+- After the first recovery increment, the complete Rancher Desktop-backed reactor succeeds across 87 suites with 266 tests passing and no failures, errors, or skipped tests.
+- The second recovery increment restores a verified physical base backup through archived WAL to a named point, promotes to a new timeline, excludes post-boundary data, and certifies the V17 application SQL contract against V18.
+- After the second recovery increment, the complete Rancher Desktop-backed reactor succeeds across 89 suites with 268 tests passing and no failures, errors, or skipped tests.
+- The third recovery increment proves against real PostgreSQL and Kafka that foreign-tenant DLQ records remain hidden, one owned record is republished to its allowlisted source partition, DLQ-only headers and payload persistence are excluded, and an idempotent retry cannot publish a second record.
+- The independent Recovery gate succeeds across 13 logical restore, PITR, compatibility, Redis reconstruction, and DLQ replay acceptance tests.
+- After the third recovery increment, the complete Rancher Desktop-backed reactor succeeds across 92 suites with 281 tests passing and no failures, errors, or skipped tests.
+- The final same-revision release matrix passes 24 security tests, two upgrade/rollback tests, thirteen recovery tests, strict Helm/kubectl validation, and generation of a validated 156-component CycloneDX 1.6 SBOM.
+- After the release-closeout contract, the complete clean Rancher Desktop-backed reactor succeeds across 92 suites with 282 tests passing and no failures, errors, or skipped tests.

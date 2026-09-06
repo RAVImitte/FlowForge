@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "soak",
+  "mode": "API",
+  "baseUrl": "http://localhost:8080",
+  "operations": 120,
+  "arrivalRatePerSecond": 0.5,
+  "maxInFlight": 20,
+  "fanOut": 8,
+  "taskDelayMs": 25,
+  "pollIntervalMs": 250,
+  "operationTimeoutSeconds": 120,
+  "scheduleLeadSeconds": 2,
+  "thresholds": {
+    "minimumAcceptanceRatio": 0.99,
+    "minimumSuccessRatio": 0.99,
+    "maximumErrorRatio": 0.01,
+    "maximumStartP95Ms": 1500,
+    "maximumCompletionP95Ms": 120000
+  }
+}

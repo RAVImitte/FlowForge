@@ -1,5 +1,6 @@
 package io.flowforge.worker.messaging;
 
+import io.flowforge.observability.TraceContextSnapshot;
 import io.flowforge.worker.config.WorkerExecutionProperties;
 import io.flowforge.worker.config.WorkerProperties;
 import io.flowforge.worker.persistence.WorkerResultMessage;
@@ -120,6 +121,7 @@ class WorkerResultPublisherTest {
 
     private static WorkerResultMessage message() {
         return new WorkerResultMessage(
+                "local",
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 "flowforge.task.results.v1",
@@ -128,7 +130,8 @@ class WorkerResultPublisherTest {
                 1,
                 "{}",
                 1,
-                UUID.randomUUID()
+                UUID.randomUUID(),
+                TraceContextSnapshot.empty()
         );
     }
 }

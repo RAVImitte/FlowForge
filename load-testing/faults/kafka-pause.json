@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "kafka-pause",
+  "actions": [
+    {
+      "service": "kafka",
+      "operation": "pause",
+      "delaySeconds": 5,
+      "durationSeconds": 5
+    }
+  ],
+  "thresholds": {
+    "maximumRecoverySeconds": 45,
+    "maximumSuppressedCommandDuplicates": 20,
+    "maximumDurableFailures": 0
+  }
+}

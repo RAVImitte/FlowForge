@@ -1,9 +1,12 @@
 package io.flowforge.application.execution;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.util.Objects;
 import java.util.UUID;
 
 public record InboundTaskResult(
+        TenantId tenantId,
         UUID eventId,
         UUID workflowExecutionId,
         UUID taskExecutionId,
@@ -17,6 +20,7 @@ public record InboundTaskResult(
         UUID fencingToken
 ) {
     public InboundTaskResult {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(eventId, "eventId must not be null");
         Objects.requireNonNull(workflowExecutionId, "workflowExecutionId must not be null");
         Objects.requireNonNull(taskExecutionId, "taskExecutionId must not be null");
@@ -30,32 +34,6 @@ public record InboundTaskResult(
         errorMessage = normalize(errorMessage);
     }
 
-    public InboundTaskResult(
-            UUID eventId,
-            UUID workflowExecutionId,
-            UUID taskExecutionId,
-            String taskKey,
-            long expectedStateVersion,
-            int attemptNumber,
-            TaskOutcome outcome,
-            String errorCode,
-            String errorMessage
-    ) {
-        this(
-                eventId,
-                workflowExecutionId,
-                taskExecutionId,
-                taskKey,
-                expectedStateVersion,
-                attemptNumber,
-                outcome,
-                errorCode,
-                errorMessage,
-                null,
-                null
-        );
-    }
-
     public TaskCompletion toCompletion() {
         return new TaskCompletion(
                 taskExecutionId,
@@ -66,15 +44,6 @@ public record InboundTaskResult(
                 retryable,
                 fencingToken
         );
-    }
-
-    public InboundTaskResult(
-            UUID eventId, UUID workflowExecutionId, UUID taskExecutionId, String taskKey,
-            long expectedStateVersion, int attemptNumber, TaskOutcome outcome,
-            String errorCode, String errorMessage, Boolean retryable
-    ) {
-        this(eventId, workflowExecutionId, taskExecutionId, taskKey, expectedStateVersion,
-                attemptNumber, outcome, errorCode, errorMessage, retryable, null);
     }
 
     private static String requireNonBlank(String value, String name) {

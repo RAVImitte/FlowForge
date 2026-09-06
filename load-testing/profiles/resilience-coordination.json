@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "name": "resilience-coordination",
+  "mode": "API",
+  "baseUrl": "http://localhost:8080",
+  "operations": 10,
+  "arrivalRatePerSecond": 10,
+  "maxInFlight": 10,
+  "fanOut": 8,
+  "taskDelayMs": 350,
+  "taskMaxAttempts": 3,
+  "retryBackoffMs": 500,
+  "workflowMaxConcurrency": 10,
+  "taskMaxConcurrency": 2,
+  "pollIntervalMs": 250,
+  "operationTimeoutSeconds": 120,
+  "scheduleLeadSeconds": 2,
+  "thresholds": {
+    "minimumAcceptanceRatio": 1.0,
+    "minimumSuccessRatio": 1.0,
+    "maximumErrorRatio": 0.0,
+    "maximumStartP95Ms": 5000,
+    "maximumCompletionP95Ms": 120000
+  }
+}

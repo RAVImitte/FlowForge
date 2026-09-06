@@ -1,5 +1,7 @@
 package io.flowforge.application.coordination;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -8,6 +10,7 @@ import java.util.UUID;
 
 public interface CoordinationPermitLedger {
     Optional<CoordinationPermit> tryAcquire(
+            TenantId tenantId,
             String resourceKey,
             String holderId,
             UUID proposedToken,
@@ -16,9 +19,14 @@ public interface CoordinationPermitLedger {
             Duration leaseDuration
     );
 
-    Optional<CoordinationPermit> renew(UUID token, Instant now, Duration leaseDuration);
+    Optional<CoordinationPermit> renew(
+            TenantId tenantId,
+            UUID token,
+            Instant now,
+            Duration leaseDuration
+    );
 
-    Optional<CoordinationPermit> release(UUID token, Instant now);
+    Optional<CoordinationPermit> release(TenantId tenantId, UUID token, Instant now);
 
-    List<CoordinationPermit> findActive(String resourceKey, Instant now);
+    List<CoordinationPermit> findActive(TenantId tenantId, String resourceKey, Instant now);
 }

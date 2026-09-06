@@ -1,8 +1,11 @@
 package io.flowforge.worker.persistence;
 
+import io.flowforge.observability.TraceContextSnapshot;
+
 import java.util.UUID;
 
 public record WorkerResultMessage(
+        String tenantId,
         UUID id,
         UUID workflowExecutionId,
         String topic,
@@ -11,6 +14,7 @@ public record WorkerResultMessage(
         int schemaVersion,
         String payload,
         int attemptCount,
-        UUID claimToken
+        UUID claimToken,
+        TraceContextSnapshot traceContext
 ) {
 }

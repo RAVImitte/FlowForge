@@ -1,6 +1,7 @@
 package io.flowforge.worker.messaging;
 
 import io.flowforge.messaging.FlowForgeTopics;
+import io.flowforge.messaging.FlowForgeHeaders;
 import io.flowforge.messaging.TaskCommandV1;
 import io.flowforge.worker.config.WorkerProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -25,14 +26,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class WorkerHeartbeatPublisherTest {
     @Test
     @SuppressWarnings("unchecked")
-    void publishesImmediatelyThenPeriodicallyAndStopsWithTheHandler() {
+    void schedulesImmediateNonBlockingPublicationThenStopsWithTheHandler() {
         KafkaTemplate<String, String> kafka = mock(KafkaTemplate.class);
         ScheduledExecutorService scheduler = mock(ScheduledExecutorService.class);
         ScheduledFuture<?> future = mock(ScheduledFuture.class);
@@ -55,20 +55,22 @@ class WorkerHeartbeatPublisherTest {
                 1, 1, UUID.randomUUID(), null
         );
 
-        WorkerHeartbeatPublisher.HeartbeatHandle handle = publisher.start(command);
+        WorkerHeartbeatPublisher.HeartbeatHandle handle = publisher.start("merchant-a", command);
         ArgumentCaptor<Runnable> scheduled = ArgumentCaptor.forClass(Runnable.class);
-        verify(scheduler).scheduleAtFixedRate(scheduled.capture(), eq(10_000L), eq(10_000L),
+        verify(scheduler).scheduleAtFixedRate(scheduled.capture(), eq(0L), eq(10_000L),
                 eq(TimeUnit.MILLISECONDS));
         scheduled.getValue().run();
         handle.close();
 
         ArgumentCaptor<ProducerRecord<String, String>> records = ArgumentCaptor.forClass(ProducerRecord.class);
-        verify(kafka, times(2)).send(records.capture());
+        verify(kafka).send(records.capture());
         assertThat(records.getAllValues()).allSatisfy(record -> {
             assertThat(record.topic()).isEqualTo(FlowForgeTopics.TASK_HEARTBEATS_V1);
             assertThat(record.key()).isEqualTo(command.taskExecutionId().toString());
             assertThat(record.value()).contains(command.fencingToken().toString());
+            assertThat(record.value()).contains("\"tenantId\":\"merchant-a\"");
             assertThat(record.headers().lastHeader("flowforge-correlation-id")).isNotNull();
+            assertThat(record.headers().lastHeader(FlowForgeHeaders.TENANT_ID)).isNotNull();
         });
         verify(future).cancel(false);
         assertThat(command.fencingToken()).isNotNull();

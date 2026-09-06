@@ -1,0 +1,1011 @@
+{
+    "schemaVersion":  1,
+    "generatedAt":  "2026-09-06T06:56:07.1678497Z",
+    "topology":  {
+                     "schemaVersion":  1,
+                     "name":  "workers-2-c4-6p",
+                     "kafkaPartitions":  6,
+                     "controlPlane":  {
+                                          "ports":  [
+                                                        8080
+                                                    ],
+                                          "databasePoolSize":  10,
+                                          "maxHeapMb":  512
+                                      },
+                     "worker":  {
+                                    "ports":  [
+                                                  8081,
+                                                  8083
+                                              ],
+                                    "databasePoolSize":  10,
+                                    "concurrency":  4,
+                                    "maxHeapMb":  512
+                                },
+                     "probeIntervalSeconds":  2,
+                     "startupTimeoutSeconds":  90,
+                     "postRunDrainSeconds":  2
+                 },
+    "environment":  {
+                        "machine":  "redacted-local-rancher-host",
+                        "operatingSystem":  "Microsoft Windows NT 10.0.22631.0",
+                        "processors":  16,
+                        "physicalMemoryBytes":  16774160384,
+                        "java":  "openjdk 21.0.6 2025-01-21",
+                        "docker":  "29.5.3",
+                        "gitCommit":  "64df3c250b6c8c38a31ed53a974c7a8a95a5be99",
+                        "gitDirty":  true
+                    },
+    "workload":  {
+                     "schemaVersion":  1,
+                     "runId":  "675afee9-6257-4224-b632-1811d69f6e6e",
+                     "profile":  "capacity",
+                     "mode":  "API",
+                     "startedAt":  "2026-09-06T06:53:28.151982400Z",
+                     "finishedAt":  "2026-09-06T06:55:19.975309200Z",
+                     "durationSeconds":  111.818928,
+                     "workload":  {
+                                      "baseUrls":  [
+                                                       "http://localhost:8080"
+                                                   ],
+                                      "operations":  100,
+                                      "arrivalRatePerSecond":  10.0,
+                                      "maxInFlight":  40,
+                                      "fanOut":  8,
+                                      "tasksPerWorkflow":  10,
+                                      "taskDelayMs":  25
+                                  },
+                     "counts":  {
+                                    "attempted":  100,
+                                    "accepted":  100,
+                                    "succeeded":  63,
+                                    "terminalFailed":  37,
+                                    "rejected":  0,
+                                    "unexpectedResponses":  0,
+                                    "timedOut":  0,
+                                    "transportErrors":  0
+                                },
+                     "rates":  {
+                                   "attemptedPerSecond":  0.894303,
+                                   "acceptedPerSecond":  0.894303,
+                                   "completedPerSecond":  0.563411,
+                                   "acceptanceRatio":  1.0,
+                                   "successRatio":  0.63,
+                                   "errorRatio":  0.37
+                               },
+                     "latencyMs":  {
+                                       "start":  {
+                                                     "count":  100,
+                                                     "p50":  279.171,
+                                                     "p95":  3339.81,
+                                                     "p99":  3400.089,
+                                                     "max":  3901.062
+                                                 },
+                                       "completion":  {
+                                                          "count":  100,
+                                                          "p50":  30885.732,
+                                                          "p95":  53513.343,
+                                                          "p99":  54587.586,
+                                                          "max":  55582.019
+                                                      }
+                                   },
+                     "httpStatuses":  {
+                                          "202":  100,
+                                          "200":  14132
+                                      },
+                     "thresholds":  [
+                                        {
+                                            "metric":  "acceptanceRatio",
+                                            "operator":  "\u003e=",
+                                            "limit":  1.0,
+                                            "actual":  1.0,
+                                            "passed":  true
+                                        },
+                                        {
+                                            "metric":  "successRatio",
+                                            "operator":  "\u003e=",
+                                            "limit":  1.0,
+                                            "actual":  0.63,
+                                            "passed":  false
+                                        },
+                                        {
+                                            "metric":  "errorRatio",
+                                            "operator":  "\u003c=",
+                                            "limit":  0.0,
+                                            "actual":  0.37,
+                                            "passed":  false
+                                        },
+                                        {
+                                            "metric":  "start.p95Ms",
+                                            "operator":  "\u003c=",
+                                            "limit":  3000.0,
+                                            "actual":  3339.81,
+                                            "passed":  false
+                                        },
+                                        {
+                                            "metric":  "completion.p95Ms",
+                                            "operator":  "\u003c=",
+                                            "limit":  120000.0,
+                                            "actual":  53513.343,
+                                            "passed":  true
+                                        }
+                                    ],
+                     "passed":  false
+                 },
+    "probes":  {
+                   "intervalSeconds":  2,
+                   "sampleCount":  5,
+                   "peaks":  {
+                                 "kafkaHeartbeatLag":  8,
+                                 "outboxOldestAgeSeconds":  0.21975,
+                                 "activeExecutions":  40,
+                                 "postgresBlockedLocks":  6,
+                                 "kafkaCommandLag":  1,
+                                 "postgresActiveConnections":  7,
+                                 "readyOldestAgeSeconds":  0,
+                                 "totalProcessCpu":  0.088762147998737245,
+                                 "readyTasks":  0,
+                                 "workerResultsPending":  0,
+                                 "postgresTotalConnections":  31,
+                                 "workerProcessing":  0,
+                                 "totalHeapBytes":  244409160,
+                                 "kafkaResultLag":  123,
+                                 "outboxPending":  50
+                             },
+                   "samples":  [
+                                   {
+                                       "timestamp":  "2026-09-06T06:53:54.4522582Z",
+                                       "applicationScrapeErrors":  0,
+                                       "totalProcessCpu":  0.013122414112392964,
+                                       "totalHeapBytes":  244409160,
+                                       "activeExecutions":  0,
+                                       "readyTasks":  0,
+                                       "readyOldestAgeSeconds":  0,
+                                       "outboxPending":  0,
+                                       "outboxOldestAgeSeconds":  0,
+                                       "workerProcessing":  0,
+                                       "workerResultsPending":  0,
+                                       "postgres":  {
+                                                        "activeConnections":  7,
+                                                        "totalConnections":  31,
+                                                        "blockedLocks":  6
+                                                    },
+                                       "commandsCompleted":  0,
+                                       "commandDuplicates":  0,
+                                       "resultsConsumed":  0,
+                                       "retriesScheduled":  0,
+                                       "taskTimeouts":  0,
+                                       "kafkaLag":  {
+                                                        "commands":  0,
+                                                        "results":  0,
+                                                        "heartbeats":  0
+                                                    },
+                                       "kafkaAssignments":  [
+
+                                                            ]
+                                   },
+                                   {
+                                       "timestamp":  "2026-09-06T06:54:27.3503802Z",
+                                       "applicationScrapeErrors":  0,
+                                       "totalProcessCpu":  0.088762147998737245,
+                                       "totalHeapBytes":  242726888,
+                                       "activeExecutions":  40,
+                                       "readyTasks":  0,
+                                       "readyOldestAgeSeconds":  0,
+                                       "outboxPending":  50,
+                                       "outboxOldestAgeSeconds":  0,
+                                       "workerProcessing":  0,
+                                       "workerResultsPending":  0,
+                                       "postgres":  {
+                                                        "activeConnections":  3,
+                                                        "totalConnections":  31,
+                                                        "blockedLocks":  0
+                                                    },
+                                       "commandsCompleted":  270,
+                                       "commandDuplicates":  0,
+                                       "resultsConsumed":  66,
+                                       "retriesScheduled":  0,
+                                       "taskTimeouts":  0,
+                                       "kafkaLag":  {
+                                                        "commands":  1,
+                                                        "results":  87,
+                                                        "heartbeats":  4
+                                                    },
+                                       "kafkaAssignments":  [
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  1,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  1,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  2,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  8,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  8,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  30,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  6,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  13,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  22,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-5168e4fa-3925-43b6-addd-4e60b249309b",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-d947ea0a-1c3e-40fa-a945-44209153d4b9",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-3-4e022cc3-bf20-42af-bd60-b32c707fa921",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-3"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-3eadb5de-d8ec-424d-9b84-6994cc1e2ad5",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  1,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-82909c2b-f6d1-4780-97a0-0e3a313454a6",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-4-f7bc0f3e-c31b-4028-b394-2c5e75610c05",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-4"
+                                                                }
+                                                            ]
+                                   },
+                                   {
+                                       "timestamp":  "2026-09-06T06:54:59.9708878Z",
+                                       "applicationScrapeErrors":  0,
+                                       "totalProcessCpu":  0.050334888642893684,
+                                       "totalHeapBytes":  222406992,
+                                       "activeExecutions":  40,
+                                       "readyTasks":  0,
+                                       "readyOldestAgeSeconds":  0,
+                                       "outboxPending":  4,
+                                       "outboxOldestAgeSeconds":  0,
+                                       "workerProcessing":  0,
+                                       "workerResultsPending":  0,
+                                       "postgres":  {
+                                                        "activeConnections":  3,
+                                                        "totalConnections":  31,
+                                                        "blockedLocks":  0
+                                                    },
+                                       "commandsCompleted":  481,
+                                       "commandDuplicates":  0,
+                                       "resultsConsumed":  324,
+                                       "retriesScheduled":  0,
+                                       "taskTimeouts":  0,
+                                       "kafkaLag":  {
+                                                        "commands":  0,
+                                                        "results":  123,
+                                                        "heartbeats":  8
+                                                    },
+                                       "kafkaAssignments":  [
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  2,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  2,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  1,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  1,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  2,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  13,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  18,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  32,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  1,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  28,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  31,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-5168e4fa-3925-43b6-addd-4e60b249309b",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-d947ea0a-1c3e-40fa-a945-44209153d4b9",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-3-4e022cc3-bf20-42af-bd60-b32c707fa921",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-3"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-3eadb5de-d8ec-424d-9b84-6994cc1e2ad5",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-82909c2b-f6d1-4780-97a0-0e3a313454a6",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-4-f7bc0f3e-c31b-4028-b394-2c5e75610c05",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-4"
+                                                                }
+                                                            ]
+                                   },
+                                   {
+                                       "timestamp":  "2026-09-06T06:55:23.8553512Z",
+                                       "applicationScrapeErrors":  0,
+                                       "totalProcessCpu":  0.037352604031452671,
+                                       "totalHeapBytes":  230485256,
+                                       "activeExecutions":  17,
+                                       "readyTasks":  0,
+                                       "readyOldestAgeSeconds":  0,
+                                       "outboxPending":  1,
+                                       "outboxOldestAgeSeconds":  0.21975,
+                                       "workerProcessing":  0,
+                                       "workerResultsPending":  0,
+                                       "postgres":  {
+                                                        "activeConnections":  1,
+                                                        "totalConnections":  31,
+                                                        "blockedLocks":  0
+                                                    },
+                                       "commandsCompleted":  698,
+                                       "commandDuplicates":  0,
+                                       "resultsConsumed":  603,
+                                       "retriesScheduled":  0,
+                                       "taskTimeouts":  0,
+                                       "kafkaLag":  {
+                                                        "commands":  0,
+                                                        "results":  42,
+                                                        "heartbeats":  0
+                                                    },
+                                       "kafkaAssignments":  [
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  11,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  31,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-5168e4fa-3925-43b6-addd-4e60b249309b",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-d947ea0a-1c3e-40fa-a945-44209153d4b9",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-3-4e022cc3-bf20-42af-bd60-b32c707fa921",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-3"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-3eadb5de-d8ec-424d-9b84-6994cc1e2ad5",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-82909c2b-f6d1-4780-97a0-0e3a313454a6",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-4-f7bc0f3e-c31b-4028-b394-2c5e75610c05",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-4"
+                                                                }
+                                                            ]
+                                   },
+                                   {
+                                       "timestamp":  "2026-09-06T06:55:43.9963099Z",
+                                       "applicationScrapeErrors":  0,
+                                       "totalProcessCpu":  0.0066594847876448133,
+                                       "totalHeapBytes":  205059432,
+                                       "activeExecutions":  0,
+                                       "readyTasks":  0,
+                                       "readyOldestAgeSeconds":  0,
+                                       "outboxPending":  0,
+                                       "outboxOldestAgeSeconds":  0,
+                                       "workerProcessing":  0,
+                                       "workerResultsPending":  0,
+                                       "postgres":  {
+                                                        "activeConnections":  1,
+                                                        "totalConnections":  31,
+                                                        "blockedLocks":  0
+                                                    },
+                                       "commandsCompleted":  699,
+                                       "commandDuplicates":  0,
+                                       "resultsConsumed":  645,
+                                       "retriesScheduled":  0,
+                                       "taskTimeouts":  0,
+                                       "kafkaLag":  {
+                                                        "commands":  0,
+                                                        "results":  20,
+                                                        "heartbeats":  0
+                                                    },
+                                       "kafkaAssignments":  [
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-heartbeats-v1",
+                                                                    "topic":  "flowforge.task.heartbeats.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-heartbeats-v1-1-66089db2-71f3-453a-b347-7ed86a971736",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-heartbeats-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-control-plane-results-v1",
+                                                                    "topic":  "flowforge.task.results.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  20,
+                                                                    "consumerId":  "consumer-flowforge-control-plane-results-v1-2-0687c8ee-ee93-4f7f-8780-33dbe288d798",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-control-plane-results-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  1,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-5168e4fa-3925-43b6-addd-4e60b249309b",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  0,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-d947ea0a-1c3e-40fa-a945-44209153d4b9",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  2,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-3-4e022cc3-bf20-42af-bd60-b32c707fa921",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-3"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  4,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-1-3eadb5de-d8ec-424d-9b84-6994cc1e2ad5",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-1"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  5,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-2-82909c2b-f6d1-4780-97a0-0e3a313454a6",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-2"
+                                                                },
+                                                                {
+                                                                    "group":  "flowforge-workers-v1",
+                                                                    "topic":  "flowforge.task.commands.v1",
+                                                                    "partition":  3,
+                                                                    "lag":  0,
+                                                                    "consumerId":  "consumer-flowforge-workers-v1-4-f7bc0f3e-c31b-4028-b394-2c5e75610c05",
+                                                                    "host":  "/192.168.127.1",
+                                                                    "clientId":  "consumer-flowforge-workers-v1-4"
+                                                                }
+                                                            ]
+                                   }
+                               ]
+               },
+    "distribution":  {
+                         "workerCommandsCompleted":  [
+                                                         {
+                                                             "instance":  "worker-0",
+                                                             "port":  8081,
+                                                             "delta":  437
+                                                         },
+                                                         {
+                                                             "instance":  "worker-1",
+                                                             "port":  8083,
+                                                             "delta":  262
+                                                         }
+                                                     ],
+                         "workerCommandDuplicates":  [
+                                                         {
+                                                             "instance":  "worker-0",
+                                                             "port":  8081,
+                                                             "delta":  0
+                                                         },
+                                                         {
+                                                             "instance":  "worker-1",
+                                                             "port":  8083,
+                                                             "delta":  0
+                                                         }
+                                                     ],
+                         "controlPlaneResultsConsumed":  [
+                                                             {
+                                                                 "instance":  "control-plane-0",
+                                                                 "port":  8080,
+                                                                 "delta":  656
+                                                             }
+                                                         ]
+                     },
+    "durableExecutionCounts":  {
+                                   "FAILED":  37,
+                                   "SUCCEEDED":  63
+                               },
+    "durableFailureCauses":  [
+                                 {
+                                     "status":  "FAILED",
+                                     "errorCode":  "WORKER_LEASE_EXPIRED",
+                                     "errorMessage":  "Worker stopped renewing the attempt lease",
+                                     "count":  42
+                                 }
+                             ],
+    "correctnessPassed":  true,
+    "loadGeneratorExitCode":  2,
+    "passed":  false,
+    "curation":  {
+                     "matrix":  "phase-6-capacity-matrix",
+                     "scenario":  "partition-bound",
+                     "category":  "kafka-partitions",
+                     "curatedAt":  "2026-09-06T07:15:20.1052714Z",
+                     "caveat":  "Local Rancher Desktop evidence; not a universal production capacity claim."
+                 }
+}

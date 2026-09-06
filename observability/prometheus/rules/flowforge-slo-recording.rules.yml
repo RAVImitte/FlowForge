@@ -1,0 +1,84 @@
+groups:
+  - name: flowforge-slo-recording
+    interval: 30s
+    limit: 1000
+    rules:
+      # Error ratios are recorded at the windows needed by the multi-window,
+      # multi-burn-rate alerts. The environment label is intentionally the
+      # only retained deployment dimension.
+      - record: flowforge:sli_api_error:ratio_rate5m
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[5m]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[5m])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[5m])), 0.000000001)
+      - record: flowforge:sli_api_error:ratio_rate30m
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[30m]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[30m])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[30m])), 0.000000001)
+      - record: flowforge:sli_api_error:ratio_rate1h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[1h]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[1h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[1h])), 0.000000001)
+      - record: flowforge:sli_api_error:ratio_rate2h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[2h]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[2h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[2h])), 0.000000001)
+      - record: flowforge:sli_api_error:ratio_rate6h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[6h]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[6h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[6h])), 0.000000001)
+      - record: flowforge:sli_api_error:ratio_rate24h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[24h]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[24h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[24h])), 0.000000001)
+      - record: flowforge:sli_api_error:ratio_rate3d
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*",status=~"5.."}[3d]))
+            or on (environment) 0 * sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[3d])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri!~"/actuator.*"}[3d])), 0.000000001)
+
+      - record: flowforge:sli_workflow_start_slow:ratio_rate5m
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[5m]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[5m])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[5m])), 0.000000001)
+      - record: flowforge:sli_workflow_start_slow:ratio_rate30m
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[30m]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[30m])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[30m])), 0.000000001)
+      - record: flowforge:sli_workflow_start_slow:ratio_rate1h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[1h]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[1h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[1h])), 0.000000001)
+      - record: flowforge:sli_workflow_start_slow:ratio_rate2h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[2h]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[2h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[2h])), 0.000000001)
+      - record: flowforge:sli_workflow_start_slow:ratio_rate6h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[6h]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[6h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[6h])), 0.000000001)
+      - record: flowforge:sli_workflow_start_slow:ratio_rate24h
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[24h]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[24h])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[24h])), 0.000000001)
+      - record: flowforge:sli_workflow_start_slow:ratio_rate3d
+        expr: |
+          (sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[3d]))
+          - sum by (environment) (rate(http_server_requests_seconds_bucket{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202",le="1.0"}[3d])))
+          / clamp_min(sum by (environment) (rate(http_server_requests_seconds_count{application="flowforge-control-plane",uri="/api/v1/workflows/{workflowId}/executions",method="POST",status="202"}[3d])), 0.000000001)
+
+      - record: flowforge:sli_task_queue_oldest:seconds
+        expr: max by (environment) (flowforge_tasks_ready_oldest_age_seconds)
+      - record: flowforge:sli_terminal_oldest_active:seconds
+        expr: max by (environment) (flowforge_executions_active_oldest_age_seconds)

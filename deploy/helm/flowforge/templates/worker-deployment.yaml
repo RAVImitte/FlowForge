@@ -1,0 +1,184 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flowforge.fullname" . }}-worker
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.worker.autoscaling.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "flowforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "flowforge.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+      {{- if or .Values.global.rotationToken .Values.worker.podAnnotations }}
+      annotations:
+        {{- if .Values.global.rotationToken }}
+        flowforge.io/rotation-token: {{ .Values.global.rotationToken | quote }}
+        {{- end }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "flowforge.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "flowforge.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "flowforge.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: worker
+      containers:
+        - name: worker
+          image: {{ include "flowforge.image" (list . .Values.worker.image) | quote }}
+          imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          env:
+            - name: FLOWFORGE_ENVIRONMENT
+              value: {{ .Values.global.environment | quote }}
+            - name: FLOWFORGE_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: FLOWFORGE_WORKER_CONCURRENCY
+              value: {{ .Values.worker.concurrency | quote }}
+            - name: FLOWFORGE_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secretRefs.database.name is required" .Values.secretRefs.database.name }}
+                  key: {{ required "secretRefs.database.urlKey is required" .Values.secretRefs.database.urlKey }}
+            - name: FLOWFORGE_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.database.name }}
+                  key: {{ required "secretRefs.database.usernameKey is required" .Values.secretRefs.database.usernameKey }}
+            - name: FLOWFORGE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.database.name }}
+                  key: {{ required "secretRefs.database.passwordKey is required" .Values.secretRefs.database.passwordKey }}
+            - name: FLOWFORGE_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "secretRefs.kafka.name is required" .Values.secretRefs.kafka.name }}
+                  key: {{ required "secretRefs.kafka.bootstrapServersKey is required" .Values.secretRefs.kafka.bootstrapServersKey }}
+            - name: SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.kafka.name }}
+                  key: {{ required "secretRefs.kafka.securityProtocolKey is required" .Values.secretRefs.kafka.securityProtocolKey }}
+            - name: SPRING_KAFKA_PROPERTIES_SASL_MECHANISM
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.kafka.name }}
+                  key: {{ required "secretRefs.kafka.saslMechanismKey is required" .Values.secretRefs.kafka.saslMechanismKey }}
+            - name: SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretRefs.kafka.name }}
+                  key: {{ required "secretRefs.kafka.saslJaasConfigKey is required" .Values.secretRefs.kafka.saslJaasConfigKey }}
+            {{- if .Values.trustStore.enabled }}
+            - name: FLOWFORGE_TRUSTSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "trustStore.secretName is required when trustStore.enabled" .Values.trustStore.secretName }}
+                  key: {{ required "trustStore.passwordKey is required when trustStore.enabled" .Values.trustStore.passwordKey }}
+            {{- end }}
+            - name: JAVA_TOOL_OPTIONS
+              value: >-
+                -XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=75.0 -Djava.io.tmpdir=/tmp{{ if .Values.trustStore.enabled }} -Djavax.net.ssl.trustStore={{ .Values.trustStore.mountPath }}/truststore.p12 -Djavax.net.ssl.trustStorePassword=$(FLOWFORGE_TRUSTSTORE_PASSWORD){{ end }}
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.trustStore.enabled }}
+            - name: truststore
+              mountPath: {{ .Values.trustStore.mountPath }}
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        {{- if .Values.trustStore.enabled }}
+        - name: truststore
+          secret:
+            secretName: {{ .Values.trustStore.secretName }}
+            defaultMode: 0440
+            items:
+              - key: {{ required "trustStore.fileKey is required when trustStore.enabled" .Values.trustStore.fileKey }}
+                path: truststore.p12
+        {{- end }}

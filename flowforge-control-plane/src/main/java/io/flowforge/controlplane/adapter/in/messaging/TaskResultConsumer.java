@@ -4,6 +4,8 @@ import io.flowforge.application.execution.InboundTaskResult;
 import io.flowforge.application.execution.TaskOutcome;
 import io.flowforge.application.execution.TaskResultIngestion;
 import io.flowforge.application.execution.TaskResultIngestionOutcome;
+import io.flowforge.domain.tenancy.TenantId;
+import io.flowforge.kafka.KafkaTenantHeader;
 import io.flowforge.messaging.FlowForgeTopics;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskResultV1;
@@ -64,6 +66,7 @@ public class TaskResultConsumer {
             }
             TaskResultV1 payload = envelope.payload();
             try (LogContext messageContext = LogContext.open(
+                    LogFields.TENANT_ID, envelope.tenantId(),
                     LogFields.CORRELATION_ID, envelope.correlationId(),
                     LogFields.EVENT_ID, envelope.eventId(),
                     LogFields.WORKFLOW_EXECUTION_ID, payload.workflowExecutionId(),
@@ -75,6 +78,7 @@ public class TaskResultConsumer {
                 try {
                     TaskResultIngestionOutcome outcome = ingestion.ingest(
                             new InboundTaskResult(
+                                    new TenantId(envelope.tenantId()),
                                     envelope.eventId(),
                                     payload.workflowExecutionId(),
                                     payload.taskExecutionId(),
@@ -130,6 +134,7 @@ public class TaskResultConsumer {
                 || envelope.schemaVersion() != TaskResultV1.SCHEMA_VERSION) {
             throw new IllegalArgumentException("Unsupported task-result contract version");
         }
+        KafkaTenantHeader.requireMatching(record.headers(), envelope.tenantId());
         if (!envelope.correlationId().equals(envelope.payload().workflowExecutionId())) {
             throw new IllegalArgumentException("Task-result correlation ID does not match workflow execution");
         }

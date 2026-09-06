@@ -1,5 +1,7 @@
 package io.flowforge.application.coordination;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -15,14 +17,21 @@ public interface EphemeralPermitStore {
 
     boolean renew(CoordinationPermit permit, Instant now, Duration ttlPadding);
 
-    boolean release(String resourceKey, UUID token, Instant now, Duration ttlPadding);
+    boolean release(
+            TenantId tenantId,
+            String resourceKey,
+            UUID token,
+            Instant now,
+            Duration ttlPadding
+    );
 
     void replace(
+            TenantId tenantId,
             String resourceKey,
             List<CoordinationPermit> permits,
             Instant now,
             Duration ttlPadding
     );
 
-    long activeCount(String resourceKey, Instant now);
+    long activeCount(TenantId tenantId, String resourceKey, Instant now);
 }

@@ -1,13 +1,17 @@
 package io.flowforge.worker.messaging;
 
+import io.flowforge.kafka.KafkaTenantHeader;
+import io.flowforge.messaging.FlowForgeHeaders;
 import io.flowforge.observability.LogContext;
 import io.flowforge.observability.LogFields;
+import io.flowforge.observability.TraceContextPropagation;
 import io.flowforge.worker.config.WorkerExecutionProperties;
 import io.flowforge.worker.config.WorkerProperties;
 import io.flowforge.worker.persistence.WorkerResultMessage;
 import io.flowforge.worker.persistence.WorkerResultOutboxRepository;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.opentelemetry.context.Scope;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,7 +97,9 @@ public class WorkerResultPublisher implements ApplicationRunner {
     }
 
     private boolean publish(WorkerResultMessage message) {
-        try (LogContext ignored = LogContext.open(
+        try (Scope traceScope = TraceContextPropagation.restore(message.traceContext());
+             LogContext ignored = LogContext.open(
+                LogFields.TENANT_ID, message.tenantId(),
                 LogFields.CORRELATION_ID, message.workflowExecutionId(),
                 LogFields.EVENT_ID, message.id(),
                 LogFields.WORKFLOW_EXECUTION_ID, message.workflowExecutionId(),
@@ -109,10 +115,11 @@ public class WorkerResultPublisher implements ApplicationRunner {
             ProducerRecord<String, String> record = new ProducerRecord<>(
                     message.topic(), message.recordKey(), message.payload()
             );
-            addHeader(record, "flowforge-event-id", message.id().toString());
-            addHeader(record, "flowforge-event-type", message.eventType());
-            addHeader(record, "flowforge-schema-version", Integer.toString(message.schemaVersion()));
-            addHeader(record, "flowforge-correlation-id", message.workflowExecutionId().toString());
+            addHeader(record, FlowForgeHeaders.EVENT_ID, message.id().toString());
+            addHeader(record, FlowForgeHeaders.EVENT_TYPE, message.eventType());
+            addHeader(record, FlowForgeHeaders.SCHEMA_VERSION, Integer.toString(message.schemaVersion()));
+            addHeader(record, FlowForgeHeaders.CORRELATION_ID, message.workflowExecutionId().toString());
+            KafkaTenantHeader.add(record.headers(), message.tenantId());
             kafkaTemplate.send(record).get(
                     properties.resultPublishTimeout().toMillis(),
                     TimeUnit.MILLISECONDS

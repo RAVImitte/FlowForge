@@ -4,12 +4,22 @@ import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.workflow.WorkflowService;
 import io.flowforge.controlplane.adapter.out.messaging.OutboxPublisher;
+import io.flowforge.domain.execution.WorkflowExecution;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 import io.flowforge.domain.workflow.WorkflowDraft;
 import io.flowforge.messaging.FlowForgeTopics;
+import io.flowforge.messaging.FlowForgeHeaders;
 import io.flowforge.messaging.MessageEnvelope;
 import io.flowforge.messaging.TaskCommandV1;
+import io.opentelemetry.api.baggage.Baggage;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.api.trace.SpanContext;
+import io.opentelemetry.api.trace.TraceFlags;
+import io.opentelemetry.api.trace.TraceState;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.header.Header;
@@ -54,6 +64,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class OutboxKafkaIntegrationTest {
     private static final Instant TIME = Instant.parse("2026-09-04T12:00:00Z");
+    private static final String TRACE_ID = "0123456789abcdef0123456789abcdef";
 
     @Container
     static final KafkaContainer KAFKA = new KafkaContainer(
@@ -91,16 +102,28 @@ class OutboxKafkaIntegrationTest {
 
     @Test
     void publishesCommandsAndEventsWithStableKeysHeadersAndPayloads() throws Exception {
-        WorkflowDefinition created = workflowService.create(new WorkflowDraft(
+        TenantId tenantId = new TenantId("merchant-a");
+        jdbc.sql("""
+                INSERT INTO tenant_registry(tenant_id, display_name, status)
+                VALUES (:tenantId, 'Merchant A', 'ACTIVE')
+                """).param("tenantId", tenantId.value()).update();
+        WorkflowDefinition created = workflowService.create(tenantId, new WorkflowDraft(
                 "Kafka outbox test",
                 null,
                 List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of())),
                 List.of()
         ));
-        WorkflowDefinition published = workflowService.publish(created.id(), created.lockVersion());
-        var execution = executionRepository.start(published.id(), "outbox-kafka", TIME);
+        WorkflowDefinition published = workflowService.publish(
+                tenantId, created.id(), created.lockVersion()
+        );
+        WorkflowExecution execution;
+        try (Scope ignored = sourceTrace().makeCurrent()) {
+            execution = executionRepository.start(tenantId, published.id(), "outbox-kafka", TIME);
+            assertThat(durableTaskQueue.enqueueReadyTasks(
+                    tenantId, 10, TIME.plusSeconds(1)
+            )).isEqualTo(1);
+        }
         UUID executionId = execution.workflow().id();
-        assertThat(durableTaskQueue.enqueueReadyTasks(10, TIME.plusSeconds(1))).isEqualTo(1);
 
         try (KafkaConsumer<String, String> consumer = consumer()) {
             consumer.subscribe(List.of(
@@ -126,12 +149,19 @@ class OutboxKafkaIntegrationTest {
             );
             assertThat(commandRecord.key()).isEqualTo(command.payload().taskExecutionId().toString());
             assertThat(command.payload().workflowExecutionId()).isEqualTo(executionId);
+            assertThat(command.tenantId()).isEqualTo(tenantId.value());
             assertThat(command.payload().taskKey()).isEqualTo("ROOT");
             assertThat(command.payload().fencingToken()).isNotNull();
             assertThat(header(commandRecord.headers().lastHeader("flowforge-event-id")))
                     .isEqualTo(command.eventId().toString());
             assertThat(header(commandRecord.headers().lastHeader("flowforge-correlation-id")))
                     .isEqualTo(executionId.toString());
+            assertThat(records).allSatisfy(record -> {
+                assertThat(header(record.headers().lastHeader(FlowForgeHeaders.TENANT_ID)))
+                        .isEqualTo(tenantId.value());
+                assertThat(header(record.headers().lastHeader("traceparent"))).contains("-" + TRACE_ID + "-");
+                assertThat(header(record.headers().lastHeader("baggage"))).isEqualTo("tenant=portfolio");
+            });
         }
 
         long publishedRows = jdbc.sql("""
@@ -155,6 +185,17 @@ class OutboxKafkaIntegrationTest {
         properties.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         properties.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
         return new KafkaConsumer<>(properties);
+    }
+
+    private static Context sourceTrace() {
+        SpanContext spanContext = SpanContext.create(
+                TRACE_ID,
+                "0123456789abcdef",
+                TraceFlags.getSampled(),
+                TraceState.getDefault()
+        );
+        return Baggage.builder().put("tenant", "portfolio").build()
+                .storeInContext(Context.root().with(Span.wrap(spanContext)));
     }
 
     private static List<org.apache.kafka.clients.consumer.ConsumerRecord<String, String>> poll(

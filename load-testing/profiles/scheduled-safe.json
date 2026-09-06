@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "scheduled-safe",
+  "mode": "SCHEDULED",
+  "baseUrl": "http://localhost:8080",
+  "operations": 25,
+  "arrivalRatePerSecond": 1,
+  "maxInFlight": 10,
+  "fanOut": 4,
+  "taskDelayMs": 10,
+  "pollIntervalMs": 100,
+  "operationTimeoutSeconds": 60,
+  "scheduleLeadSeconds": 3,
+  "thresholds": {
+    "minimumAcceptanceRatio": 1.0,
+    "minimumSuccessRatio": 1.0,
+    "maximumErrorRatio": 0.0,
+    "maximumStartP95Ms": 1000,
+    "maximumCompletionP95Ms": 10000
+  }
+}

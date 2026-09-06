@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flowforge.fullname" . }}-control-plane
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  type: {{ .Values.controlPlane.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.controlPlane.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "flowforge.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flowforge.fullname" . }}-worker
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: {{ .Values.worker.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.worker.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "flowforge.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: worker

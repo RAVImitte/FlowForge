@@ -18,6 +18,15 @@ public final class FlowForgeTopics {
         };
     }
 
+    public static String sourceTopicForDeadLetter(String deadLetterTopic) {
+        return switch (deadLetterTopic) {
+            case TASK_COMMANDS_DLQ_V1 -> TASK_COMMANDS_V1;
+            case TASK_RESULTS_DLQ_V1 -> TASK_RESULTS_V1;
+            case TASK_HEARTBEATS_DLQ_V1 -> TASK_HEARTBEATS_V1;
+            default -> throw new IllegalArgumentException("Unsupported dead-letter topic " + deadLetterTopic);
+        };
+    }
+
     private FlowForgeTopics() {
     }
 }

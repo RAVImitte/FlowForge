@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "name": "phase-6-capacity-matrix",
+  "scenarios": [
+    {
+      "id": "baseline-smoke",
+      "category": "safe-envelope",
+      "topology": "single-6p",
+      "profile": "smoke",
+      "requiredPass": true
+    },
+    {
+      "id": "baseline",
+      "category": "baseline",
+      "topology": "single-6p",
+      "profile": "capacity",
+      "requiredPass": false
+    },
+    {
+      "id": "horizontal-workers",
+      "category": "horizontal-scale",
+      "topology": "workers-2-6p",
+      "profile": "capacity",
+      "requiredPass": false
+    },
+    {
+      "id": "horizontal-balanced-smoke",
+      "category": "safe-envelope",
+      "topology": "balanced-2x2-6p",
+      "profile": "smoke",
+      "requiredPass": true
+    },
+    {
+      "id": "horizontal-balanced",
+      "category": "horizontal-scale",
+      "topology": "balanced-2x2-6p",
+      "profile": "capacity",
+      "requiredPass": false
+    },
+    {
+      "id": "pool-bound",
+      "category": "database-pool",
+      "topology": "single-pool2-6p",
+      "profile": "capacity",
+      "requiredPass": false
+    },
+    {
+      "id": "partition-bound",
+      "category": "kafka-partitions",
+      "topology": "workers-2-c4-6p",
+      "profile": "capacity",
+      "requiredPass": false
+    },
+    {
+      "id": "overload",
+      "category": "overload",
+      "topology": "balanced-2x2-6p",
+      "profile": "overload",
+      "requiredPass": false
+    },
+    {
+      "id": "scheduled",
+      "category": "scheduling",
+      "topology": "balanced-2x2-6p",
+      "profile": "scheduled",
+      "requiredPass": false
+    },
+    {
+      "id": "scheduled-safe",
+      "category": "safe-envelope",
+      "topology": "balanced-2x2-6p",
+      "profile": "scheduled-safe",
+      "requiredPass": true
+    },
+    {
+      "id": "soak",
+      "category": "soak",
+      "topology": "workers-2-6p",
+      "profile": "soak",
+      "requiredPass": true
+    }
+  ]
+}

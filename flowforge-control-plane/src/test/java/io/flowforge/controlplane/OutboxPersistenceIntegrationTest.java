@@ -1,5 +1,6 @@
 package io.flowforge.controlplane;
 
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.workflow.WorkflowService;
@@ -84,9 +85,13 @@ class OutboxPersistenceIntegrationTest {
 
         assertEventJournalMatchesOutbox(execution.workflow().id(), execution);
 
-        assertThat(durableTaskQueue.enqueueReadyTasks(10, TIME.plusSeconds(1))).isEqualTo(1);
+        assertThat(durableTaskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, 10, TIME.plusSeconds(1)
+        )).isEqualTo(1);
 
-        WorkflowExecution claimed = executionRepository.findById(execution.workflow().id()).orElseThrow();
+        WorkflowExecution claimed = executionRepository.findById(
+                TenantId.LOCAL, execution.workflow().id()
+        ).orElseThrow();
         assertThat(claimed.tasks()).singleElement().satisfies(task -> {
             assertThat(task.status()).isEqualTo(TaskRunStatus.RUNNING);
             assertThat(task.stateVersion()).isEqualTo(1);
@@ -125,7 +130,7 @@ class OutboxPersistenceIntegrationTest {
     @Test
     void reclaimsExpiredLeasesWithStableEventIds() {
         startWorkflow(List.of(task("ROOT")));
-        durableTaskQueue.enqueueReadyTasks(10, TIME.plusSeconds(1));
+        durableTaskQueue.enqueueReadyTasks(TenantId.LOCAL, 10, TIME.plusSeconds(1));
 
         List<OutboxMessage> firstClaim = outboxRepository.claimBatch(
                 100, "publisher-a", TIME.plusSeconds(2), LEASE
@@ -154,7 +159,9 @@ class OutboxPersistenceIntegrationTest {
     @Test
     void concurrentPublishersClaimDisjointBatches() throws Exception {
         startWorkflow(IntStream.range(0, 20).mapToObj(index -> task("ROOT_" + index)).toList());
-        assertThat(durableTaskQueue.enqueueReadyTasks(100, TIME.plusSeconds(1))).isEqualTo(20);
+        assertThat(durableTaskQueue.enqueueReadyTasks(
+                TenantId.LOCAL, 100, TIME.plusSeconds(1)
+        )).isEqualTo(20);
 
         CountDownLatch start = new CountDownLatch(1);
         List<OutboxMessage> first;
@@ -198,11 +205,15 @@ class OutboxPersistenceIntegrationTest {
     }
 
     private WorkflowExecution startWorkflow(List<TaskDefinition> tasks) {
-        WorkflowDefinition created = workflowService.create(new WorkflowDraft(
+        WorkflowDefinition created = workflowService.create(TenantId.LOCAL, new WorkflowDraft(
                 "Outbox test", null, tasks, List.of()
         ));
-        WorkflowDefinition published = workflowService.publish(created.id(), created.lockVersion());
-        return executionRepository.start(published.id(), "request-" + java.util.UUID.randomUUID(), TIME);
+        WorkflowDefinition published = workflowService.publish(
+                TenantId.LOCAL, created.id(), created.lockVersion()
+        );
+        return executionRepository.start(
+                TenantId.LOCAL, published.id(), "request-" + java.util.UUID.randomUUID(), TIME
+        );
     }
 
     private static TaskDefinition task(String key) {

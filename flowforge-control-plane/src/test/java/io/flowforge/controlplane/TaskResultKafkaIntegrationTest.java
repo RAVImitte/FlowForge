@@ -1,5 +1,6 @@
 package io.flowforge.controlplane;
 
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.workflow.WorkflowService;
@@ -103,7 +104,7 @@ class TaskResultKafkaIntegrationTest {
 
     @Test
     void completesFanOutAndFanInThroughKafkaAndConsumesDuplicateResultsOnce() throws Exception {
-        WorkflowDefinition created = workflows.create(new WorkflowDraft(
+        WorkflowDefinition created = workflows.create(TenantId.LOCAL, new WorkflowDraft(
                 "Kafka result ingestion",
                 null,
                 List.of(task("ROOT"), task("LEFT"), task("RIGHT"), task("JOIN")),
@@ -114,10 +115,12 @@ class TaskResultKafkaIntegrationTest {
                         new TaskDependency("JOIN", "RIGHT")
                 )
         ));
-        WorkflowDefinition published = workflows.publish(created.id(), created.lockVersion());
-        var execution = executions.start(published.id(), "kafka-result", TIME);
+        WorkflowDefinition published = workflows.publish(
+                TenantId.LOCAL, created.id(), created.lockVersion()
+        );
+        var execution = executions.start(TenantId.LOCAL, published.id(), "kafka-result", TIME);
         UUID workflowExecutionId = execution.workflow().id();
-        taskQueue.enqueueReadyTasks(workflowExecutionId, 1000, TIME.plusSeconds(1));
+        taskQueue.enqueueReadyTasks(TenantId.LOCAL, workflowExecutionId, 1000, TIME.plusSeconds(1));
         awaitListener(Duration.ofSeconds(15));
 
         try (KafkaProducer<String, String> producer = producer()) {
@@ -152,7 +155,7 @@ class TaskResultKafkaIntegrationTest {
                 false,
                 Duration.ofSeconds(15)
         );
-        var current = executions.findById(workflowExecutionId).orElseThrow();
+        var current = executions.findById(TenantId.LOCAL, workflowExecutionId).orElseThrow();
         assertThat(current.workflow().status()).isEqualTo(WorkflowRunStatus.SUCCEEDED);
         assertThat(current.tasks()).extracting(task -> task.status()).containsOnly(TaskRunStatus.SUCCEEDED);
         assertThat(jdbc.sql("""
@@ -260,7 +263,7 @@ class TaskResultKafkaIntegrationTest {
     }
 
     private ProducerRecord<String, String> resultRecord(UUID workflowExecutionId, String taskKey) throws Exception {
-        var task = executions.findById(workflowExecutionId).orElseThrow().tasks().stream()
+        var task = executions.findById(TenantId.LOCAL, workflowExecutionId).orElseThrow().tasks().stream()
                 .filter(candidate -> candidate.taskKey().equals(taskKey))
                 .findFirst()
                 .orElseThrow();

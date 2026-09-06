@@ -8,6 +8,9 @@ import io.flowforge.application.schedule.ScheduleMaterializationResult;
 import io.flowforge.application.schedule.QueueSnapshot;
 import io.flowforge.application.schedule.WorkflowScheduleService;
 import io.flowforge.application.workflow.WorkflowService;
+import io.flowforge.application.coordination.TokenBucketPolicy;
+import io.flowforge.application.tenancy.TenantQuotaPolicy;
+import io.flowforge.application.tenancy.TenantQuotaService;
 import io.flowforge.domain.schedule.CronSchedule;
 import io.flowforge.domain.schedule.MisfirePolicy;
 import io.flowforge.domain.schedule.OneTimeSchedule;
@@ -17,6 +20,7 @@ import io.flowforge.domain.schedule.WorkflowScheduleDraft;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 import io.flowforge.domain.workflow.WorkflowDraft;
+import io.flowforge.domain.tenancy.TenantId;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -77,6 +81,83 @@ class ScheduleTriggerIntegrationTest {
     @Autowired
     JdbcClient jdbc;
 
+    @Autowired
+    TenantQuotaService quotas;
+
+    @Test
+    void appliesIndependentPendingFireQuotasFromPostgres() {
+        jdbc.sql("DELETE FROM workflow_schedule_trigger WHERE status IN ('PENDING', 'PROCESSING')")
+                .update();
+        jdbc.sql("UPDATE workflow_schedule SET status = 'PAUSED' WHERE status = 'ACTIVE'")
+                .update();
+        TenantId tenantA = registerTenant("schedule-quota-a", "Schedule Quota A");
+        TenantId tenantB = registerTenant("schedule-quota-b", "Schedule Quota B");
+        quotas.update(tenantA, quotaPolicy(1), 0);
+        quotas.update(tenantB, quotaPolicy(2), 0);
+        WorkflowDefinition workflowA = publishedWorkflow(tenantA, "Schedule quota A");
+        WorkflowDefinition workflowB = publishedWorkflow(tenantB, "Schedule quota B");
+        WorkflowSchedule a1 = oneTimeSchedule(tenantA, workflowA.id(), MisfirePolicy.FIRE_ONCE);
+        WorkflowSchedule a2 = oneTimeSchedule(tenantA, workflowA.id(), MisfirePolicy.FIRE_ONCE);
+        WorkflowSchedule b1 = oneTimeSchedule(tenantB, workflowB.id(), MisfirePolicy.FIRE_ONCE);
+        WorkflowSchedule b2 = oneTimeSchedule(tenantB, workflowB.id(), MisfirePolicy.FIRE_ONCE);
+        Instant now = now();
+        List.of(a1, a2, b1, b2).forEach(schedule -> makeOneTimeDue(schedule.id(), now));
+
+        ScheduleMaterializationResult result = fireRepository.materializeDue(
+                4, now.plusSeconds(1), Duration.ofMinutes(1)
+        );
+
+        assertThat(result.pending()).isEqualTo(3);
+        assertThat(result.capacityDeferred()).isEqualTo(1);
+        assertThat(fireRepository.pendingQueue(tenantA, now.plusSeconds(1)).depth()).isEqualTo(1);
+        assertThat(fireRepository.pendingQueue(tenantB, now.plusSeconds(1)).depth()).isEqualTo(2);
+    }
+
+    @Test
+    void isolatesTriggerLeasesAndPendingCapacityByTenant() {
+        jdbc.sql("DELETE FROM workflow_schedule_trigger WHERE status IN ('PENDING', 'PROCESSING')")
+                .update();
+        jdbc.sql("UPDATE workflow_schedule SET status = 'PAUSED' WHERE status = 'ACTIVE'")
+                .update();
+        TenantId tenantA = registerTenant("trigger-merchant-a", "Trigger Merchant A");
+        TenantId tenantB = registerTenant("trigger-merchant-b", "Trigger Merchant B");
+        WorkflowDefinition workflowA = publishedWorkflow(tenantA, "Tenant A trigger");
+        WorkflowDefinition workflowB = publishedWorkflow(tenantB, "Tenant B trigger");
+        WorkflowSchedule scheduleA = oneTimeSchedule(
+                tenantA, workflowA.id(), MisfirePolicy.FIRE_ONCE);
+        WorkflowSchedule scheduleB = oneTimeSchedule(
+                tenantB, workflowB.id(), MisfirePolicy.FIRE_ONCE);
+        Instant due = now().minusSeconds(1);
+        makeOneTimeDue(scheduleA.id(), due);
+        makeOneTimeDue(scheduleB.id(), due.plusNanos(1_000));
+
+        ScheduleMaterializationResult result = fireRepository.materializeDue(
+                10, 1, now(), Duration.ofMinutes(1));
+
+        assertThat(result.pending()).isEqualTo(2);
+        assertThat(result.capacityDeferred()).isZero();
+        assertThat(fireRepository.pendingQueue(tenantA, now()).depth()).isEqualTo(1);
+        assertThat(fireRepository.pendingQueue(tenantB, now()).depth()).isEqualTo(1);
+        assertThat(fireRepository.pendingTenants(now(), 10)).contains(tenantA, tenantB);
+
+        ClaimedScheduleFire claimedA = fireRepository.claimPending(
+                tenantA, 1, "tenant-a-scheduler", now(), Duration.ofSeconds(30)
+        ).getFirst();
+        assertThat(claimedA.tenantId()).isEqualTo(tenantA);
+        assertThat(fireRepository.markFailed(
+                tenantB, claimedA.triggerId(), claimedA.claimToken(), "foreign", now()
+        )).isFalse();
+        assertThat(fireRepository.markFailed(
+                tenantA, claimedA.triggerId(), claimedA.claimToken(), "test cleanup", now()
+        )).isTrue();
+        ClaimedScheduleFire claimedB = fireRepository.claimPending(
+                tenantB, 1, "tenant-b-scheduler", now(), Duration.ofSeconds(30)
+        ).getFirst();
+        assertThat(fireRepository.markFailed(
+                tenantB, claimedB.triggerId(), claimedB.claimToken(), "test cleanup", now()
+        )).isTrue();
+    }
+
     @Test
     void startsAOneTimeScheduleExactlyOnceAndCompletesIt() {
         WorkflowDefinition workflow = publishedWorkflow("One-time trigger");
@@ -87,7 +168,7 @@ class ScheduleTriggerIntegrationTest {
         ScheduleFireRunResult first = fireService.runOnce(10, 10);
         ScheduleFireRunResult second = fireService.runOnce(10, 10);
 
-        WorkflowSchedule completed = schedules.get(schedule.id());
+        WorkflowSchedule completed = schedules.get(TenantId.LOCAL, schedule.id());
         assertThat(first.materialized()).isEqualTo(1);
         assertThat(triggerErrors(schedule.id())).containsOnlyNulls();
         assertThat(first.started()).isEqualTo(1);
@@ -116,8 +197,8 @@ class ScheduleTriggerIntegrationTest {
         assertThat(result.started()).isEqualTo(1);
         assertThat(triggerStatuses(catchUp.id())).containsExactly("STARTED");
         assertThat(triggerStatuses(skip.id())).containsExactly("SKIPPED");
-        assertThat(schedules.get(catchUp.id()).nextFireAt()).isAfter(Instant.now());
-        assertThat(schedules.get(skip.id()).nextFireAt()).isAfter(Instant.now());
+        assertThat(schedules.get(TenantId.LOCAL, catchUp.id()).nextFireAt()).isAfter(Instant.now());
+        assertThat(schedules.get(TenantId.LOCAL, skip.id()).nextFireAt()).isAfter(Instant.now());
         assertThat(countExecutions(workflow.id())).isEqualTo(1);
     }
 
@@ -156,10 +237,10 @@ class ScheduleTriggerIntegrationTest {
         List<ClaimedScheduleFire> secondClaims;
         try (var pool = Executors.newFixedThreadPool(2)) {
             var first = pool.submit(() -> fireRepository.claimPending(
-                    6, "scheduler-a", claimTime, Duration.ofSeconds(30)
+                    TenantId.LOCAL, 6, "scheduler-a", claimTime, Duration.ofSeconds(30)
             ));
             var second = pool.submit(() -> fireRepository.claimPending(
-                    6, "scheduler-b", claimTime, Duration.ofSeconds(30)
+                    TenantId.LOCAL, 6, "scheduler-b", claimTime, Duration.ofSeconds(30)
             ));
             firstClaims = first.get(10, TimeUnit.SECONDS);
             secondClaims = second.get(10, TimeUnit.SECONDS);
@@ -187,20 +268,22 @@ class ScheduleTriggerIntegrationTest {
 
         Instant claimedAt = now();
         ClaimedScheduleFire abandoned = fireRepository.claimPending(
-                1, "failed-scheduler", claimedAt, Duration.ofSeconds(1)
+                TenantId.LOCAL, 1, "failed-scheduler", claimedAt, Duration.ofSeconds(1)
         ).getFirst();
         assertThat(fireRepository.claimPending(
-                1, "early-replacement", claimedAt.plusMillis(999), Duration.ofSeconds(1)
+                TenantId.LOCAL, 1, "early-replacement", claimedAt.plusMillis(999), Duration.ofSeconds(1)
         )).isEmpty();
 
         ClaimedScheduleFire replacement = fireRepository.claimPending(
-                1, "replacement", claimedAt.plusSeconds(1), Duration.ofSeconds(30)
+                TenantId.LOCAL, 1, "replacement", claimedAt.plusSeconds(1), Duration.ofSeconds(30)
         ).getFirst();
         assertThat(fireRepository.markStarted(
-                abandoned.triggerId(), abandoned.claimToken(), UUID.randomUUID(), claimedAt.plusSeconds(2)
+                TenantId.LOCAL, abandoned.triggerId(), abandoned.claimToken(),
+                UUID.randomUUID(), claimedAt.plusSeconds(2)
         )).isFalse();
         assertThat(fireRepository.markFailed(
-                replacement.triggerId(), replacement.claimToken(), "replacement-test", claimedAt.plusSeconds(2)
+                TenantId.LOCAL, replacement.triggerId(), replacement.claimToken(),
+                "replacement-test", claimedAt.plusSeconds(2)
         )).isTrue();
         assertThat(replacement.attemptCount()).isEqualTo(2);
         assertThat(countExecutions(workflow.id())).isZero();
@@ -215,7 +298,7 @@ class ScheduleTriggerIntegrationTest {
         Instant due = now().minusSeconds(1);
         makeOneTimeDue(first.id(), due);
         makeOneTimeDue(second.id(), due.plusNanos(1_000));
-        QueueSnapshot before = fireRepository.pendingQueue(now());
+        QueueSnapshot before = fireRepository.pendingQueue(TenantId.LOCAL, now());
 
         ScheduleMaterializationResult result = fireRepository.materializeDue(
                 10, Math.toIntExact(before.depth() + 1), now(), Duration.ofMinutes(1)
@@ -224,7 +307,8 @@ class ScheduleTriggerIntegrationTest {
         assertThat(result.pending()).isEqualTo(1);
         assertThat(result.capacityDeferred()).isEqualTo(1);
         assertThat(countTriggersForWorkflow(workflow.id())).isEqualTo(1);
-        assertThat(fireRepository.pendingQueue(now()).depth()).isEqualTo(before.depth() + 1);
+        assertThat(fireRepository.pendingQueue(TenantId.LOCAL, now()).depth())
+                .isEqualTo(before.depth() + 1);
 
         jdbc.sql("DELETE FROM workflow_schedule_trigger WHERE workflow_id = :workflowId")
                 .param("workflowId", workflow.id())
@@ -240,7 +324,15 @@ class ScheduleTriggerIntegrationTest {
     }
 
     private WorkflowSchedule oneTimeSchedule(UUID workflowId, MisfirePolicy policy) {
-        return schedules.create(new WorkflowScheduleDraft(
+        return oneTimeSchedule(TenantId.LOCAL, workflowId, policy);
+    }
+
+    private WorkflowSchedule oneTimeSchedule(
+            TenantId tenantId,
+            UUID workflowId,
+            MisfirePolicy policy
+    ) {
+        return schedules.create(tenantId, new WorkflowScheduleDraft(
                 workflowId,
                 new OneTimeSchedule(now().plus(Duration.ofHours(1))),
                 policy
@@ -248,7 +340,7 @@ class ScheduleTriggerIntegrationTest {
     }
 
     private WorkflowSchedule cronSchedule(UUID workflowId, MisfirePolicy policy) {
-        return schedules.create(new WorkflowScheduleDraft(
+        return schedules.create(TenantId.LOCAL, new WorkflowScheduleDraft(
                 workflowId,
                 new CronSchedule("0 * * * * *", ZoneId.of("UTC")),
                 policy
@@ -312,13 +404,34 @@ class ScheduleTriggerIntegrationTest {
     }
 
     private WorkflowDefinition publishedWorkflow(String name) {
-        WorkflowDefinition draft = workflows.create(new WorkflowDraft(
+        return publishedWorkflow(TenantId.LOCAL, name);
+    }
+
+    private WorkflowDefinition publishedWorkflow(TenantId tenantId, String name) {
+        WorkflowDefinition draft = workflows.create(tenantId, new WorkflowDraft(
                 name,
                 null,
                 List.of(new TaskDefinition("ROOT", "Root", "NOOP", Map.of())),
                 List.of()
         ));
-        return workflows.publish(draft.id(), draft.lockVersion());
+        return workflows.publish(tenantId, draft.id(), draft.lockVersion());
+    }
+
+    private TenantId registerTenant(String tenantId, String displayName) {
+        jdbc.sql("""
+                INSERT INTO tenant_registry(tenant_id, display_name, status)
+                VALUES (:tenantId, :displayName, 'ACTIVE')
+                ON CONFLICT (tenant_id) DO NOTHING
+                """)
+                .param("tenantId", tenantId)
+                .param("displayName", displayName)
+                .update();
+        return new TenantId(tenantId);
+    }
+
+    private static TenantQuotaPolicy quotaPolicy(int maxPending) {
+        TokenBucketPolicy rate = new TokenBucketPolicy(100, 100, Duration.ofSeconds(1));
+        return new TenantQuotaPolicy(100, 100, maxPending, 100, rate, rate);
     }
 
     private static Set<UUID> triggerIds(List<ClaimedScheduleFire> fires) {

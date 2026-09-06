@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "overload",
+  "mode": "API",
+  "baseUrl": "http://localhost:8080",
+  "operations": 1000,
+  "arrivalRatePerSecond": 100,
+  "maxInFlight": 250,
+  "fanOut": 8,
+  "taskDelayMs": 50,
+  "pollIntervalMs": 250,
+  "operationTimeoutSeconds": 120,
+  "scheduleLeadSeconds": 2,
+  "thresholds": {
+    "minimumAcceptanceRatio": 0.9,
+    "minimumSuccessRatio": 0.98,
+    "maximumErrorRatio": 0.1,
+    "maximumStartP95Ms": 2000,
+    "maximumCompletionP95Ms": 90000
+  }
+}

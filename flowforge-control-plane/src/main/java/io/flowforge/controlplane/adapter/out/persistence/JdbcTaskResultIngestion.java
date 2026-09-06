@@ -3,6 +3,7 @@ package io.flowforge.controlplane.adapter.out.persistence;
 import io.flowforge.application.coordination.TokenBucketDecision;
 import io.flowforge.application.coordination.TokenBucketPolicy;
 import io.flowforge.application.coordination.TokenBucketRateLimiter;
+import io.flowforge.application.tenancy.TenantQuotaProvider;
 import io.flowforge.application.execution.AdmissionBackpressureObserver;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionConflictException;
@@ -13,13 +14,11 @@ import io.flowforge.application.execution.TaskResultIngestion;
 import io.flowforge.application.execution.TaskResultIngestionOutcome;
 import io.flowforge.application.execution.ReadyQueueSnapshot;
 import io.flowforge.controlplane.config.ResultIngestionProperties;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
-import java.time.Duration;
 import java.time.Instant;
 
 @Repository
@@ -31,7 +30,7 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
     private final DurableTaskQueue taskQueue;
     private final ResultIngestionProperties properties;
     private final TokenBucketRateLimiter rateLimiter;
-    private final TokenBucketPolicy dispatchRateLimit;
+    private final TenantQuotaProvider quotas;
     private final AdmissionBackpressureObserver backpressureObserver;
 
     public JdbcTaskResultIngestion(
@@ -40,18 +39,16 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
             DurableTaskQueue taskQueue,
             ResultIngestionProperties properties,
             TokenBucketRateLimiter rateLimiter,
-            AdmissionBackpressureObserver backpressureObserver,
-            @Value("${flowforge.rate-limits.task-dispatch.capacity:200}") int capacity,
-            @Value("${flowforge.rate-limits.task-dispatch.refill-tokens:200}") int refillTokens,
-            @Value("${flowforge.rate-limits.task-dispatch.refill-period:1s}") Duration refillPeriod
+            TenantQuotaProvider quotas,
+            AdmissionBackpressureObserver backpressureObserver
     ) {
         this.jdbc = jdbc;
         this.executions = executions;
         this.taskQueue = taskQueue;
         this.properties = properties;
         this.rateLimiter = rateLimiter;
+        this.quotas = quotas;
         this.backpressureObserver = backpressureObserver;
-        this.dispatchRateLimit = new TokenBucketPolicy(capacity, refillTokens, refillPeriod);
     }
 
     @Override
@@ -67,16 +64,17 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
         validateAndLockWorkflow(result);
         int inserted = jdbc.sql("""
                 INSERT INTO control_plane_result_inbox(
-                    consumer_name, event_id, workflow_execution_id, task_execution_id,
+                    tenant_id, consumer_name, event_id, workflow_execution_id, task_execution_id,
                     task_key, expected_state_version, attempt_number, outcome,
                     payload, disposition, received_at
                 ) VALUES (
-                    :consumerName, :eventId, :workflowId, :taskId,
+                    :tenantId, :consumerName, :eventId, :workflowId, :taskId,
                     :taskKey, :stateVersion, :attemptNumber, :outcome,
                     CAST(:payload AS jsonb), 'PROCESSING', :receivedAt
                 )
-                ON CONFLICT (consumer_name, event_id) DO NOTHING
+                ON CONFLICT (tenant_id, consumer_name, event_id) DO NOTHING
                 """)
+                .param("tenantId", result.tenantId().value())
                 .param("consumerName", CONSUMER_NAME)
                 .param("eventId", result.eventId())
                 .param("workflowId", result.workflowExecutionId())
@@ -92,9 +90,11 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
         if (inserted == 0) {
             boolean samePayload = jdbc.sql("""
                     SELECT payload = CAST(:payload AS jsonb)
-                      FROM control_plane_result_inbox
-                     WHERE consumer_name = :consumerName AND event_id = :eventId
+                     FROM control_plane_result_inbox
+                     WHERE tenant_id = :tenantId
+                       AND consumer_name = :consumerName AND event_id = :eventId
                     """)
+                    .param("tenantId", result.tenantId().value())
                     .param("payload", serializedEnvelope)
                     .param("consumerName", CONSUMER_NAME)
                     .param("eventId", result.eventId())
@@ -119,12 +119,14 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
                 UPDATE control_plane_result_inbox
                    SET disposition = :disposition, processed_at = :processedAt
                  WHERE consumer_name = :consumerName
+                   AND tenant_id = :tenantId
                    AND event_id = :eventId
                    AND disposition = 'PROCESSING'
                 """)
                 .param("disposition", outcome.name())
                 .param("processedAt", Timestamp.from(receivedAt))
                 .param("consumerName", CONSUMER_NAME)
+                .param("tenantId", result.tenantId().value())
                 .param("eventId", result.eventId())
                 .update();
         if (updated != 1) {
@@ -134,13 +136,16 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
     }
 
     private void enqueueWithinRateLimit(InboundTaskResult result, Instant receivedAt) {
-        ReadyQueueSnapshot queue = taskQueue.readyQueue(receivedAt, properties.enqueueBatchSize());
+        ReadyQueueSnapshot queue = taskQueue.readyQueue(
+                result.tenantId(), receivedAt, properties.enqueueBatchSize()
+        );
         if (queue == null) queue = ReadyQueueSnapshot.unknown(properties.enqueueBatchSize());
         backpressureObserver.readyQueueObserved(queue.depth(), queue.oldestAge());
         int requested = (int) Math.min(properties.enqueueBatchSize(), queue.depth());
         if (requested == 0) return;
         TokenBucketDecision decision = rateLimiter.consume(
-                "task-dispatch", dispatchRateLimit, requested, receivedAt
+                result.tenantId(), "task-dispatch",
+                quotas.quotaFor(result.tenantId()).policy().dispatchRateLimit(), requested, receivedAt
         );
         if (decision.throttled(requested)) {
             backpressureObserver.taskDispatchThrottled(
@@ -149,7 +154,7 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
         }
         if (decision.granted() > 0) {
             taskQueue.enqueueReadyTasks(
-                    result.workflowExecutionId(), decision.granted(), receivedAt
+                    result.tenantId(), result.workflowExecutionId(), decision.granted(), receivedAt
             );
         }
     }
@@ -167,10 +172,12 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
                               AND ta.attempt_number = :attemptNumber
                        ) AS attempt_exists
                   FROM task_execution te
-                  JOIN workflow_execution we ON we.id = te.workflow_execution_id
+                 JOIN workflow_execution we ON we.id = te.workflow_execution_id
                  WHERE te.id = :taskId
+                   AND we.tenant_id = :tenantId
                  FOR UPDATE OF we
                 """)
+                .param("tenantId", result.tenantId().value())
                 .param("attemptNumber", result.attemptNumber())
                 .param("taskId", result.taskExecutionId())
                 .query((rs, rowNum) -> new StoredTask(

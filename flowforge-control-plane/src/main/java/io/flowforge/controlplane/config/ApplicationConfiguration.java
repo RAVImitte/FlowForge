@@ -1,5 +1,7 @@
 package io.flowforge.controlplane.config;
 
+import io.flowforge.application.audit.SecurityAuditRepository;
+import io.flowforge.application.audit.SecurityAuditService;
 import io.flowforge.application.coordination.CoordinationObserver;
 import io.flowforge.application.coordination.CoordinationPermitLedger;
 import io.flowforge.application.coordination.CoordinationPermitService;
@@ -10,12 +12,19 @@ import io.flowforge.application.execution.AdmissionBackpressureObserver;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.TaskDispatcher;
 import io.flowforge.application.execution.WorkflowExecutionService;
+import io.flowforge.application.recovery.DeadLetterReplayRepository;
+import io.flowforge.application.recovery.DeadLetterReplayService;
+import io.flowforge.application.recovery.DeadLetterTransport;
 import io.flowforge.application.schedule.ScheduleCalculator;
 import io.flowforge.application.schedule.ScheduleFireRepository;
 import io.flowforge.application.schedule.ScheduleFireService;
 import io.flowforge.application.schedule.ScheduleRepository;
 import io.flowforge.application.schedule.ScheduleBackpressureObserver;
 import io.flowforge.application.schedule.WorkflowScheduleService;
+import io.flowforge.application.tenancy.TenantQuotaPolicy;
+import io.flowforge.application.tenancy.TenantQuotaProvider;
+import io.flowforge.application.tenancy.TenantQuotaRepository;
+import io.flowforge.application.tenancy.TenantQuotaService;
 import io.flowforge.application.workflow.WorkflowRepository;
 import io.flowforge.application.workflow.WorkflowService;
 import org.slf4j.Logger;
@@ -39,6 +48,55 @@ public class ApplicationConfiguration {
     @Bean
     WorkflowService workflowService(WorkflowRepository repository) {
         return new WorkflowService(repository);
+    }
+
+    @Bean
+    TenantQuotaPolicy tenantQuotaDefaults(
+            @Value("${flowforge.quotas.defaults.max-active-executions:10000}") int maxActiveExecutions,
+            @Value("${flowforge.quotas.defaults.max-running-tasks:10000}") int maxRunningTasks,
+            @Value("${flowforge.backpressure.max-pending-schedule-fires:10000}") int maxPending,
+            @Value("${flowforge.quotas.defaults.max-ready-tasks:10000}") int maxReadyTasks,
+            @Value("${flowforge.rate-limits.schedule-fires.capacity:100}") int scheduleCapacity,
+            @Value("${flowforge.rate-limits.schedule-fires.refill-tokens:100}") int scheduleRefillTokens,
+            @Value("${flowforge.rate-limits.schedule-fires.refill-period:1s}") Duration scheduleRefillPeriod,
+            @Value("${flowforge.rate-limits.task-dispatch.capacity:200}") int dispatchCapacity,
+            @Value("${flowforge.rate-limits.task-dispatch.refill-tokens:200}") int dispatchRefillTokens,
+            @Value("${flowforge.rate-limits.task-dispatch.refill-period:1s}") Duration dispatchRefillPeriod
+    ) {
+        return new TenantQuotaPolicy(
+                maxActiveExecutions, maxRunningTasks, maxPending, maxReadyTasks,
+                new TokenBucketPolicy(scheduleCapacity, scheduleRefillTokens, scheduleRefillPeriod),
+                new TokenBucketPolicy(dispatchCapacity, dispatchRefillTokens, dispatchRefillPeriod)
+        );
+    }
+
+    @Bean
+    TenantQuotaService tenantQuotaService(
+            TenantQuotaRepository repository,
+            TenantQuotaProvider provider,
+            Clock clock
+    ) {
+        return new TenantQuotaService(repository, provider, clock);
+    }
+
+    @Bean
+    SecurityAuditService securityAuditService(
+            SecurityAuditRepository repository,
+            Clock clock,
+            @Value("${flowforge.audit.online-retention:365d}") Duration onlineRetention
+    ) {
+        return new SecurityAuditService(repository, clock, onlineRetention);
+    }
+
+    @Bean
+    DeadLetterReplayService deadLetterReplayService(
+            DeadLetterTransport transport,
+            DeadLetterReplayRepository repository,
+            Clock clock,
+            @Value("${flowforge.dlq-replay.transport-timeout:10s}") Duration transportTimeout,
+            @Value("${flowforge.dlq-replay.claim-lease:30s}") Duration claimLease
+    ) {
+        return new DeadLetterReplayService(transport, repository, clock, transportTimeout, claimLease);
     }
 
     @Bean
@@ -82,10 +140,8 @@ public class ApplicationConfiguration {
             @Value("${flowforge.scheduling.misfire-threshold:1m}") Duration misfireThreshold,
             @Value("${flowforge.backpressure.max-pending-schedule-fires:10000}") int maxPending,
             TokenBucketRateLimiter rateLimiter,
-            ScheduleBackpressureObserver backpressureObserver,
-            @Value("${flowforge.rate-limits.schedule-fires.capacity:100}") int capacity,
-            @Value("${flowforge.rate-limits.schedule-fires.refill-tokens:100}") int refillTokens,
-            @Value("${flowforge.rate-limits.schedule-fires.refill-period:1s}") Duration refillPeriod
+            TenantQuotaProvider quotaProvider,
+            ScheduleBackpressureObserver backpressureObserver
     ) {
         return new ScheduleFireService(
                 fires,
@@ -97,7 +153,7 @@ public class ApplicationConfiguration {
                 misfireThreshold,
                 maxPending,
                 rateLimiter,
-                new TokenBucketPolicy(capacity, refillTokens, refillPeriod),
+                quotaProvider,
                 backpressureObserver
         );
     }
@@ -108,10 +164,9 @@ public class ApplicationConfiguration {
             TaskDispatcher dispatcher,
             Clock clock,
             TokenBucketRateLimiter rateLimiter,
+            TenantQuotaProvider quotaProvider,
             AdmissionBackpressureObserver backpressureObserver,
-            @Value("${flowforge.rate-limits.task-dispatch.capacity:200}") int capacity,
-            @Value("${flowforge.rate-limits.task-dispatch.refill-tokens:200}") int refillTokens,
-            @Value("${flowforge.rate-limits.task-dispatch.refill-period:1s}") Duration refillPeriod
+            @Value("${flowforge.execution.dispatch-enabled:true}") boolean dispatchOnStart
     ) {
         return new WorkflowExecutionService(
                 repository,
@@ -124,8 +179,9 @@ public class ApplicationConfiguration {
                         failure
                 ),
                 rateLimiter,
-                new TokenBucketPolicy(capacity, refillTokens, refillPeriod),
-                backpressureObserver
+                quotaProvider,
+                backpressureObserver,
+                dispatchOnStart
         );
     }
 

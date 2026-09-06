@@ -6,7 +6,9 @@ import io.flowforge.application.workflow.PageResult;
 import io.flowforge.application.workflow.WorkflowConflictException;
 import io.flowforge.application.workflow.WorkflowNotFoundException;
 import io.flowforge.application.workflow.WorkflowRepository;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
+import io.flowforge.domain.workflow.SecretReference;
 import io.flowforge.domain.workflow.TaskDependency;
 import io.flowforge.domain.workflow.TaskReliabilityPolicy;
 import io.flowforge.domain.workflow.WorkflowDefinition;
@@ -30,7 +32,7 @@ import java.util.UUID;
 @Repository
 public class JdbcWorkflowRepository implements WorkflowRepository {
     private static final String SELECT_CURRENT = """
-            SELECT w.id, w.lock_version, w.lifecycle_status, w.created_at, w.updated_at,
+            SELECT w.id, w.tenant_id, w.lock_version, w.lifecycle_status, w.created_at, w.updated_at,
                    v.id AS workflow_version_id, v.version_number, v.version_status,
                    v.name, v.description, v.max_concurrent_executions, v.published_at
               FROM workflow_definition w
@@ -43,6 +45,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                      LIMIT 1
               ) v ON TRUE
              WHERE w.id = :id
+               AND w.tenant_id = :tenantId
                AND w.lifecycle_status = 'ACTIVE'
             """;
 
@@ -56,13 +59,16 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
 
     @Override
     @Transactional
-    public WorkflowDefinition create(WorkflowDraft draft) {
+    public WorkflowDefinition create(TenantId tenantId, WorkflowDraft draft) {
         UUID workflowId = UUID.randomUUID();
         UUID versionId = UUID.randomUUID();
         jdbc.sql("""
-                INSERT INTO workflow_definition(id, lifecycle_status)
-                VALUES (:id, 'ACTIVE')
-                """).param("id", workflowId).update();
+                INSERT INTO workflow_definition(id, tenant_id, lifecycle_status)
+                VALUES (:id, :tenantId, 'ACTIVE')
+                """)
+                .param("id", workflowId)
+                .param("tenantId", tenantId.value())
+                .update();
         jdbc.sql("""
                 INSERT INTO workflow_version(
                     id, workflow_id, version_number, version_status, name, description,
@@ -79,18 +85,20 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                 .param("maxConcurrentExecutions", draft.maxConcurrentExecutions())
                 .update();
         replaceGraph(versionId, draft);
-        return findById(workflowId).orElseThrow();
+        return findById(tenantId, workflowId).orElseThrow();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Optional<WorkflowDefinition> findById(UUID id) {
+    public Optional<WorkflowDefinition> findById(TenantId tenantId, UUID id) {
         return jdbc.sql(SELECT_CURRENT)
                 .param("id", id)
+                .param("tenantId", tenantId.value())
                 .query((rs, rowNum) -> {
                     UUID versionId = rs.getObject("workflow_version_id", UUID.class);
                     return new WorkflowDefinition(
                             rs.getObject("id", UUID.class),
+                            new TenantId(rs.getString("tenant_id")),
                             rs.getLong("lock_version"),
                             WorkflowLifecycleStatus.valueOf(rs.getString("lifecycle_status")),
                             rs.getInt("version_number"),
@@ -110,46 +118,64 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
 
     @Override
     @Transactional(readOnly = true)
-    public PageResult<WorkflowDefinition> findAll(int page, int size) {
+    public PageResult<WorkflowDefinition> findAll(TenantId tenantId, int page, int size) {
         long total = jdbc.sql("""
-                SELECT COUNT(*) FROM workflow_definition WHERE lifecycle_status = 'ACTIVE'
-                """).query(Long.class).single();
+                SELECT COUNT(*)
+                  FROM workflow_definition
+                 WHERE tenant_id = :tenantId
+                   AND lifecycle_status = 'ACTIVE'
+                """)
+                .param("tenantId", tenantId.value())
+                .query(Long.class)
+                .single();
         List<UUID> ids = jdbc.sql("""
                 SELECT id
                   FROM workflow_definition
-                 WHERE lifecycle_status = 'ACTIVE'
+                 WHERE tenant_id = :tenantId
+                   AND lifecycle_status = 'ACTIVE'
                  ORDER BY created_at DESC, id
                  LIMIT :limit OFFSET :offset
                 """)
+                .param("tenantId", tenantId.value())
                 .param("limit", size)
                 .param("offset", page * size)
                 .query(UUID.class)
                 .list();
         List<WorkflowDefinition> workflows = ids.stream()
-                .map(id -> findById(id).orElseThrow())
+                .map(id -> findById(tenantId, id).orElseThrow())
                 .toList();
         return new PageResult<>(workflows, page, size, total);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public boolean hasPublishedVersion(UUID id) {
+    public boolean hasPublishedVersion(TenantId tenantId, UUID id) {
         return jdbc.sql("""
                 SELECT EXISTS (
                     SELECT 1
                       FROM workflow_definition w
                       JOIN workflow_version v ON v.workflow_id = w.id
                      WHERE w.id = :id
+                       AND w.tenant_id = :tenantId
                        AND w.lifecycle_status = 'ACTIVE'
                        AND v.version_status = 'PUBLISHED'
                 )
-                """).param("id", id).query(Boolean.class).single();
+                """)
+                .param("id", id)
+                .param("tenantId", tenantId.value())
+                .query(Boolean.class)
+                .single();
     }
 
     @Override
     @Transactional
-    public WorkflowDefinition update(UUID id, long expectedLockVersion, WorkflowDraft draft) {
-        lockAndCheck(id, expectedLockVersion);
+    public WorkflowDefinition update(
+            TenantId tenantId,
+            UUID id,
+            long expectedLockVersion,
+            WorkflowDraft draft
+    ) {
+        lockAndCheck(tenantId, id, expectedLockVersion);
         Optional<UUID> existingDraft = jdbc.sql("""
                 SELECT id FROM workflow_version
                  WHERE workflow_id = :workflowId AND version_status = 'DRAFT'
@@ -195,14 +221,14 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                     .update();
         }
         replaceGraph(versionId, draft);
-        incrementVersion(id);
-        return findById(id).orElseThrow();
+        incrementVersion(tenantId, id);
+        return findById(tenantId, id).orElseThrow();
     }
 
     @Override
     @Transactional
-    public WorkflowDefinition publish(UUID id, long expectedLockVersion) {
-        lockAndCheck(id, expectedLockVersion);
+    public WorkflowDefinition publish(TenantId tenantId, UUID id, long expectedLockVersion) {
+        lockAndCheck(tenantId, id, expectedLockVersion);
         int changed = jdbc.sql("""
                 UPDATE workflow_version
                    SET version_status = 'PUBLISHED',
@@ -214,30 +240,42 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
         if (changed == 0) {
             throw new WorkflowConflictException("Workflow has no draft version to publish");
         }
-        incrementVersion(id);
-        return findById(id).orElseThrow();
+        incrementVersion(tenantId, id);
+        return findById(tenantId, id).orElseThrow();
     }
 
     @Override
     @Transactional
-    public void archive(UUID id, long expectedLockVersion) {
-        lockAndCheck(id, expectedLockVersion);
+    public void archive(TenantId tenantId, UUID id, long expectedLockVersion) {
+        lockAndCheck(tenantId, id, expectedLockVersion);
         jdbc.sql("""
                 UPDATE workflow_definition
                    SET lifecycle_status = 'ARCHIVED',
                        lock_version = lock_version + 1,
                        updated_at = CURRENT_TIMESTAMP
                  WHERE id = :id
-                """).param("id", id).update();
+                   AND tenant_id = :tenantId
+                """)
+                .param("id", id)
+                .param("tenantId", tenantId.value())
+                .update();
     }
 
-    private void lockAndCheck(UUID id, long expectedLockVersion) {
+    private void lockAndCheck(TenantId tenantId, UUID id, long expectedLockVersion) {
         Optional<Map<String, Object>> row = jdbc.sql("""
                 SELECT lock_version, lifecycle_status
                   FROM workflow_definition
                  WHERE id = :id
+                   AND tenant_id = :tenantId
                  FOR UPDATE
-                """).param("id", id).query((rs, rowNum) -> Map.<String, Object>of("lock_version", rs.getLong("lock_version"), "lifecycle_status", rs.getString("lifecycle_status"))).optional();
+                """)
+                .param("id", id)
+                .param("tenantId", tenantId.value())
+                .query((rs, rowNum) -> Map.<String, Object>of(
+                        "lock_version", rs.getLong("lock_version"),
+                        "lifecycle_status", rs.getString("lifecycle_status")
+                ))
+                .optional();
         if (row.isEmpty() || !"ACTIVE".equals(row.get().get("lifecycle_status"))) {
             throw new WorkflowNotFoundException(id);
         }
@@ -249,12 +287,16 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
         }
     }
 
-    private void incrementVersion(UUID id) {
+    private void incrementVersion(TenantId tenantId, UUID id) {
         jdbc.sql("""
                 UPDATE workflow_definition
                    SET lock_version = lock_version + 1, updated_at = CURRENT_TIMESTAMP
                  WHERE id = :id
-                """).param("id", id).update();
+                   AND tenant_id = :tenantId
+                """)
+                .param("id", id)
+                .param("tenantId", tenantId.value())
+                .update();
     }
 
     private void replaceGraph(UUID versionId, WorkflowDraft draft) {
@@ -267,12 +309,13 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
             TaskDefinition task = draft.tasks().get(position);
             jdbc.sql("""
                     INSERT INTO workflow_task(
-                        id, workflow_version_id, task_key, task_name, task_type, configuration, position,
+                        id, workflow_version_id, task_key, task_name, task_type, configuration,
+                        secret_references, position,
                         max_attempts, initial_backoff_ms, backoff_multiplier, max_backoff_ms,
                         jitter_factor, attempt_timeout_ms, retryable_error_codes, max_concurrency
                     ) VALUES (
                         :id, :versionId, :taskKey, :taskName, :taskType,
-                        CAST(:configuration AS jsonb), :position,
+                        CAST(:configuration AS jsonb), CAST(:secretReferences AS jsonb), :position,
                         :maxAttempts, :initialBackoffMs, :backoffMultiplier, :maxBackoffMs,
                         :jitterFactor, :attemptTimeoutMs, CAST(:retryableErrorCodes AS jsonb),
                         :maxConcurrency
@@ -284,6 +327,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                     .param("taskName", task.name())
                     .param("taskType", task.type())
                     .param("configuration", toJson(task.configuration()))
+                    .param("secretReferences", toJson(task.secretReferences()))
                     .param("position", position)
                     .param("maxAttempts", task.reliabilityPolicy().maxAttempts())
                     .param("initialBackoffMs", task.reliabilityPolicy().initialBackoff().toMillis())
@@ -312,7 +356,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
 
     private List<TaskDefinition> loadTasks(UUID versionId) {
         return jdbc.sql("""
-                SELECT task_key, task_name, task_type, configuration,
+                SELECT task_key, task_name, task_type, configuration, secret_references,
                        max_attempts, initial_backoff_ms, backoff_multiplier, max_backoff_ms,
                        jitter_factor, attempt_timeout_ms, retryable_error_codes, max_concurrency
                   FROM workflow_task
@@ -325,6 +369,7 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
                         rs.getString("task_name"),
                         rs.getString("task_type"),
                         fromJson(rs.getString("configuration")),
+                        secretReferencesFromJson(rs.getString("secret_references")),
                         new TaskReliabilityPolicy(
                                 rs.getInt("max_attempts"),
                                 Duration.ofMillis(rs.getLong("initial_backoff_ms")),
@@ -368,6 +413,27 @@ public class JdbcWorkflowRepository implements WorkflowRepository {
             return objectMapper.readValue(value, Map.class);
         } catch (JacksonException exception) {
             throw new IllegalStateException("Stored task configuration is invalid", exception);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, SecretReference> secretReferencesFromJson(String value) {
+        try {
+            Map<String, Object> raw = objectMapper.readValue(value, Map.class);
+            return raw.entrySet().stream().collect(java.util.stream.Collectors.toUnmodifiableMap(
+                    Map.Entry::getKey,
+                    entry -> {
+                        Map<String, Object> reference = (Map<String, Object>) entry.getValue();
+                        Object version = reference.get("version");
+                        return new SecretReference(
+                                String.valueOf(reference.get("provider")),
+                                String.valueOf(reference.get("name")),
+                                version == null ? null : String.valueOf(version)
+                        );
+                    }
+            ));
+        } catch (JacksonException | ClassCastException exception) {
+            throw new IllegalStateException("Stored secret references are invalid", exception);
         }
     }
 

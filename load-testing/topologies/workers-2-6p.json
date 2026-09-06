@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "workers-2-6p",
+  "kafkaPartitions": 6,
+  "controlPlane": {
+    "ports": [8080],
+    "databasePoolSize": 10,
+    "maxHeapMb": 512
+  },
+  "worker": {
+    "ports": [8081, 8083],
+    "databasePoolSize": 10,
+    "concurrency": 1,
+    "maxHeapMb": 512
+  },
+  "probeIntervalSeconds": 2,
+  "startupTimeoutSeconds": 90,
+  "postRunDrainSeconds": 2
+}

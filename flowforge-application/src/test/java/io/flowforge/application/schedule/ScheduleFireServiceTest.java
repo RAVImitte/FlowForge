@@ -8,6 +8,7 @@ import io.flowforge.application.execution.WorkflowNotPublishedException;
 import io.flowforge.domain.execution.WorkflowExecution;
 import io.flowforge.domain.execution.WorkflowRun;
 import io.flowforge.domain.execution.WorkflowRunStatus;
+import io.flowforge.domain.tenancy.TenantId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -50,40 +51,51 @@ class ScheduleFireServiceTest {
         );
         when(repository.materializeDue(10, 1_000_000, NOW, Duration.ofMinutes(1)))
                 .thenReturn(ScheduleMaterializationResult.empty());
-        when(repository.pendingQueue(NOW)).thenReturn(new QueueSnapshot(10, Duration.ofSeconds(3)));
+        when(repository.pendingTenants(NOW, 10)).thenReturn(List.of(TenantId.LOCAL));
+        when(repository.pendingQueue(TenantId.LOCAL, NOW))
+                .thenReturn(new QueueSnapshot(10, Duration.ofSeconds(3)));
     }
 
     @Test
     void startsClaimedWorkAndAcknowledgesItWithTheClaimToken() {
         ClaimedScheduleFire fire = fire(1);
-        when(repository.claimPending(10, "scheduler-1", NOW, Duration.ofSeconds(30)))
+        when(repository.claimPending(
+                TenantId.LOCAL, 10, "scheduler-1", NOW, Duration.ofSeconds(30)
+        ))
                 .thenReturn(List.of(fire));
-        when(executions.start(WORKFLOW_ID, fire.idempotencyKey())).thenReturn(execution());
-        when(repository.markStarted(fire.triggerId(), fire.claimToken(), EXECUTION_ID, NOW))
+        when(executions.start(TenantId.LOCAL, WORKFLOW_ID, fire.idempotencyKey()))
+                .thenReturn(execution());
+        when(repository.markStarted(
+                TenantId.LOCAL, fire.triggerId(), fire.claimToken(), EXECUTION_ID, NOW
+        ))
                 .thenReturn(true);
 
         ScheduleFireRunResult result = service.runOnce(10, 10);
 
         assertThat(result.started()).isEqualTo(1);
         assertThat(result.released()).isZero();
-        verify(repository).markStarted(fire.triggerId(), fire.claimToken(), EXECUTION_ID, NOW);
+        verify(repository).markStarted(
+                TenantId.LOCAL, fire.triggerId(), fire.claimToken(), EXECUTION_ID, NOW
+        );
     }
 
     @Test
     void terminatesPermanentFailuresAndReleasesTransientFailuresWithBackoff() {
         ClaimedScheduleFire permanent = fire(1);
         ClaimedScheduleFire transientFire = fire(2);
-        when(repository.claimPending(10, "scheduler-1", NOW, Duration.ofSeconds(30)))
+        when(repository.claimPending(
+                TenantId.LOCAL, 10, "scheduler-1", NOW, Duration.ofSeconds(30)
+        ))
                 .thenReturn(List.of(permanent, transientFire));
-        when(executions.start(eq(WORKFLOW_ID), any()))
+        when(executions.start(eq(TenantId.LOCAL), eq(WORKFLOW_ID), any()))
                 .thenThrow(new WorkflowNotPublishedException(WORKFLOW_ID))
                 .thenThrow(new IllegalStateException("database unavailable"));
         when(repository.markFailed(
-                permanent.triggerId(), permanent.claimToken(),
+                TenantId.LOCAL, permanent.triggerId(), permanent.claimToken(),
                 "Workflow has no published version: " + WORKFLOW_ID, NOW
         )).thenReturn(true);
         when(repository.release(
-                transientFire.triggerId(), transientFire.claimToken(),
+                TenantId.LOCAL, transientFire.triggerId(), transientFire.claimToken(),
                 "database unavailable", NOW.plusSeconds(5)
         )).thenReturn(true);
 
@@ -92,11 +104,12 @@ class ScheduleFireServiceTest {
         assertThat(result.failed()).isEqualTo(1);
         assertThat(result.released()).isEqualTo(1);
         verify(repository).markFailed(
-                permanent.triggerId(), permanent.claimToken(),
+                TenantId.LOCAL, permanent.triggerId(), permanent.claimToken(),
                 "Workflow has no published version: " + WORKFLOW_ID, NOW
         );
         ArgumentCaptor<Instant> availableAt = ArgumentCaptor.forClass(Instant.class);
         verify(repository).release(
+                eq(TenantId.LOCAL),
                 eq(transientFire.triggerId()),
                 eq(transientFire.claimToken()),
                 eq("database unavailable"),
@@ -130,10 +143,14 @@ class ScheduleFireServiceTest {
         );
         when(repository.materializeDue(10, 100, NOW, Duration.ofMinutes(1)))
                 .thenReturn(ScheduleMaterializationResult.empty());
-        when(repository.pendingQueue(NOW)).thenReturn(new QueueSnapshot(5, Duration.ofSeconds(7)));
-        when(limiter.consume("schedule-fires", policy, 5, NOW))
+        when(repository.pendingTenants(NOW, 10)).thenReturn(List.of(TenantId.LOCAL));
+        when(repository.pendingQueue(TenantId.LOCAL, NOW))
+                .thenReturn(new QueueSnapshot(5, Duration.ofSeconds(7)));
+        when(limiter.consume(TenantId.LOCAL, "schedule-fires", policy, 5, NOW))
                 .thenReturn(new TokenBucketDecision(2, Duration.ofMillis(500)));
-        when(repository.claimPending(2, "scheduler-1", NOW, Duration.ofSeconds(30)))
+        when(repository.claimPending(
+                TenantId.LOCAL, 2, "scheduler-1", NOW, Duration.ofSeconds(30)
+        ))
                 .thenReturn(List.of());
 
         ScheduleFireRunResult result = limited.runOnce(10, 10);
@@ -141,11 +158,14 @@ class ScheduleFireServiceTest {
         assertThat(result.throttled()).isEqualTo(3);
         assertThat(result.pendingDepth()).isEqualTo(5);
         verify(observer).scheduleFiresThrottled(5, 2, Duration.ofMillis(500));
-        verify(repository).claimPending(2, "scheduler-1", NOW, Duration.ofSeconds(30));
+        verify(repository).claimPending(
+                TenantId.LOCAL, 2, "scheduler-1", NOW, Duration.ofSeconds(30)
+        );
     }
 
     private static ClaimedScheduleFire fire(int suffix) {
         return new ClaimedScheduleFire(
+                TenantId.LOCAL,
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 WORKFLOW_ID,
@@ -159,6 +179,6 @@ class ScheduleFireServiceTest {
     private static WorkflowExecution execution() {
         WorkflowRun workflow = WorkflowRun.pending(EXECUTION_ID, WORKFLOW_ID, 1, NOW)
                 .transitionTo(WorkflowRunStatus.RUNNING, NOW);
-        return new WorkflowExecution(workflow, List.of(), List.of(), List.of());
+        return new WorkflowExecution(TenantId.LOCAL, workflow, List.of(), List.of(), List.of());
     }
 }

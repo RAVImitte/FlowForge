@@ -31,15 +31,19 @@ spring:
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       properties:
+        allow.auto.create.topics: false
         partition.assignment.strategy: org.apache.kafka.clients.consumer.CooperativeStickyAssignor
     listener:
       ack-mode: manual_immediate
+      observation-enabled: true
     producer:
       acks: all
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
       properties:
         enable.idempotence: true
+    template:
+      observation-enabled: true
   jackson:
     default-property-inclusion: non_null
 
@@ -48,10 +52,44 @@ server:
   shutdown: graceful
 
 management:
+  tracing:
+    sampling:
+      probability: ${FLOWFORGE_TRACING_SAMPLING_PROBABILITY:0.1}
+    propagation:
+      type: w3c
+    baggage:
+      enabled: true
+    export:
+      otlp:
+        enabled: ${FLOWFORGE_OTLP_ENABLED:false}
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${FLOWFORGE_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+      limits:
+        max-attributes: ${FLOWFORGE_TRACE_MAX_ATTRIBUTES:64}
+        max-attribute-value-length: ${FLOWFORGE_TRACE_MAX_ATTRIBUTE_VALUE_LENGTH:1024}
+  otlp:
+    metrics:
+      export:
+        enabled: false
+  prometheus:
+    metrics:
+      export:
+        enabled: ${FLOWFORGE_PROMETHEUS_ENABLED:true}
+        descriptions: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${FLOWFORGE_ENVIRONMENT:local}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       probes:
@@ -67,9 +105,21 @@ management:
 info:
   app:
     name: FlowForge
-    phase: 5
+    phase: 7
 
 flowforge:
+  dlq-replay:
+    transport-timeout: ${FLOWFORGE_DLQ_REPLAY_TRANSPORT_TIMEOUT:10s}
+    claim-lease: ${FLOWFORGE_DLQ_REPLAY_CLAIM_LEASE:30s}
+  audit:
+    online-retention: ${FLOWFORGE_AUDIT_ONLINE_RETENTION:365d}
+  security:
+    enabled: ${FLOWFORGE_SECURITY_ENABLED:false}
+    issuer-uri: ${FLOWFORGE_OIDC_ISSUER_URI:}
+    jwk-set-uri: ${FLOWFORGE_OIDC_JWK_SET_URI:}
+    roles-claim: ${FLOWFORGE_SECURITY_ROLES_CLAIM:roles}
+    tenant-id-claim: ${FLOWFORGE_SECURITY_TENANT_ID_CLAIM:tenant_id}
+    local-tenant-id: ${FLOWFORGE_LOCAL_TENANT_ID:local}
   kafka:
     enabled: ${FLOWFORGE_KAFKA_ENABLED:false}
     topics:
@@ -85,6 +135,7 @@ flowforge:
     publisher-enabled: ${FLOWFORGE_OUTBOX_PUBLISHER_ENABLED:false}
     command-dispatch-enabled: ${FLOWFORGE_OUTBOX_COMMAND_DISPATCH_ENABLED:false}
     batch-size: ${FLOWFORGE_OUTBOX_BATCH_SIZE:100}
+    publish-concurrency: ${FLOWFORGE_OUTBOX_PUBLISH_CONCURRENCY:8}
     poll-interval-ms: ${FLOWFORGE_OUTBOX_POLL_INTERVAL_MS:250}
     command-dispatch-interval-ms: ${FLOWFORGE_OUTBOX_COMMAND_DISPATCH_INTERVAL_MS:250}
     lease-duration: ${FLOWFORGE_OUTBOX_LEASE_DURATION:30s}
@@ -142,6 +193,11 @@ flowforge:
       capacity: ${FLOWFORGE_DISPATCH_RATE_CAPACITY:200}
       refill-tokens: ${FLOWFORGE_DISPATCH_RATE_REFILL_TOKENS:200}
       refill-period: ${FLOWFORGE_DISPATCH_RATE_REFILL_PERIOD:1s}
+  quotas:
+    defaults:
+      max-active-executions: ${FLOWFORGE_TENANT_MAX_ACTIVE_EXECUTIONS:10000}
+      max-running-tasks: ${FLOWFORGE_TENANT_MAX_RUNNING_TASKS:10000}
+      max-ready-tasks: ${FLOWFORGE_TENANT_MAX_READY_TASKS:10000}
   backpressure:
     max-pending-schedule-fires: ${FLOWFORGE_MAX_PENDING_SCHEDULE_FIRES:10000}
     max-ready-tasks-per-workflow: ${FLOWFORGE_MAX_READY_TASKS_PER_WORKFLOW:1000}

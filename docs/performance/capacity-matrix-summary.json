@@ -1,0 +1,993 @@
+{
+    "schemaVersion":  1,
+    "matrix":  "phase-6-capacity-matrix",
+    "generatedAt":  "2026-09-06T07:15:20.1790464Z",
+    "scenarioCount":  11,
+    "requiredFailureCount":  0,
+    "passed":  true,
+    "caveat":  "Results describe this local Rancher Desktop host and configured workload only.",
+    "scenarios":  [
+                      {
+                          "id":  "baseline-smoke",
+                          "category":  "safe-envelope",
+                          "topology":  "single-6p",
+                          "profile":  "smoke",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  25,
+                                         "accepted":  25,
+                                         "succeeded":  25,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  1.116283,
+                                        "acceptedPerSecond":  1.116283,
+                                        "completedPerSecond":  1.116283,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  1.0,
+                                        "errorRatio":  0.0
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  25,
+                                                          "p50":  169.529,
+                                                          "p95":  424.533,
+                                                          "p99":  514.949,
+                                                          "max":  514.949
+                                                      },
+                                            "completion":  {
+                                                               "count":  25,
+                                                               "p50":  7769.414,
+                                                               "p95":  11574.975,
+                                                               "p99":  11720.783,
+                                                               "max":  11720.783
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  1,
+                                        "outboxOldestAgeSeconds":  0.284,
+                                        "activeExecutions":  5,
+                                        "postgresBlockedLocks":  0,
+                                        "kafkaCommandLag":  3,
+                                        "postgresActiveConnections":  1,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.0498217451425265,
+                                        "readyTasks":  0,
+                                        "workerResultsPending":  0,
+                                        "postgresTotalConnections":  21,
+                                        "workerProcessing":  0,
+                                        "totalHeapBytes":  134106792,
+                                        "kafkaResultLag":  19,
+                                        "outboxPending":  6
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "SUCCEEDED":  25
+                                                     },
+                          "durableFailureCauses":  [
+
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  1,
+                                                   "total":  150,
+                                                   "minimum":  150,
+                                                   "maximum":  150,
+                                                   "imbalanceRatio":  0
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  1,
+                                                         "total":  150,
+                                                         "minimum":  150,
+                                                         "maximum":  150,
+                                                         "imbalanceRatio":  0
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  1,
+                                        "activeCommandConsumers":  1,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "baseline",
+                          "category":  "baseline",
+                          "topology":  "single-6p",
+                          "profile":  "capacity",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  100,
+                                         "accepted":  100,
+                                         "succeeded":  47,
+                                         "terminalFailed":  53,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.968021,
+                                        "acceptedPerSecond":  0.968021,
+                                        "completedPerSecond":  0.45497,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  0.47,
+                                        "errorRatio":  0.53
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  100,
+                                                          "p50":  217.166,
+                                                          "p95":  1928.79,
+                                                          "p99":  2185.725,
+                                                          "max":  2248.314
+                                                      },
+                                            "completion":  {
+                                                               "count":  100,
+                                                               "p50":  30781.382,
+                                                               "p95":  56522.072,
+                                                               "p99":  61237.212,
+                                                               "max":  62540.161
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  2,
+                                        "outboxOldestAgeSeconds":  0.282883,
+                                        "activeExecutions":  40,
+                                        "postgresBlockedLocks":  1,
+                                        "kafkaCommandLag":  8,
+                                        "postgresActiveConnections":  2,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.069024209645787218,
+                                        "readyTasks":  1,
+                                        "workerResultsPending":  5,
+                                        "postgresTotalConnections":  21,
+                                        "workerProcessing":  1,
+                                        "totalHeapBytes":  190899224,
+                                        "kafkaResultLag":  170,
+                                        "outboxPending":  25
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "FAILED":  53,
+                                                         "SUCCEEDED":  47
+                                                     },
+                          "durableFailureCauses":  [
+                                                       {
+                                                           "status":  "FAILED",
+                                                           "errorCode":  "WORKER_LEASE_EXPIRED",
+                                                           "errorMessage":  "Worker stopped renewing the attempt lease",
+                                                           "count":  85
+                                                       }
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  1,
+                                                   "total":  704,
+                                                   "minimum":  704,
+                                                   "maximum":  704,
+                                                   "imbalanceRatio":  0
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  1,
+                                                         "total":  583,
+                                                         "minimum":  583,
+                                                         "maximum":  583,
+                                                         "imbalanceRatio":  0
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  1,
+                                        "activeCommandConsumers":  1,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "horizontal-workers",
+                          "category":  "horizontal-scale",
+                          "topology":  "workers-2-6p",
+                          "profile":  "capacity",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  100,
+                                         "accepted":  100,
+                                         "succeeded":  82,
+                                         "terminalFailed":  18,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.886161,
+                                        "acceptedPerSecond":  0.886161,
+                                        "completedPerSecond":  0.726652,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  0.82,
+                                        "errorRatio":  0.18
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  100,
+                                                          "p50":  218.592,
+                                                          "p95":  1351.707,
+                                                          "p99":  1895.103,
+                                                          "max":  1903.196
+                                                      },
+                                            "completion":  {
+                                                               "count":  100,
+                                                               "p50":  32903.824,
+                                                               "p95":  64464.109,
+                                                               "p99":  74081.372,
+                                                               "max":  74529.945
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  4,
+                                        "outboxOldestAgeSeconds":  0.636684,
+                                        "activeExecutions":  40,
+                                        "postgresBlockedLocks":  1,
+                                        "kafkaCommandLag":  5,
+                                        "postgresActiveConnections":  3,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.069731904775026582,
+                                        "readyTasks":  0,
+                                        "workerResultsPending":  10,
+                                        "postgresTotalConnections":  31,
+                                        "workerProcessing":  2,
+                                        "totalHeapBytes":  264059584,
+                                        "kafkaResultLag":  208,
+                                        "outboxPending":  27
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "FAILED":  18,
+                                                         "SUCCEEDED":  82
+                                                     },
+                          "durableFailureCauses":  [
+                                                       {
+                                                           "status":  "FAILED",
+                                                           "errorCode":  "WORKER_LEASE_EXPIRED",
+                                                           "errorMessage":  "Worker stopped renewing the attempt lease",
+                                                           "count":  18
+                                                       }
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  917,
+                                                   "minimum":  421,
+                                                   "maximum":  496,
+                                                   "imbalanceRatio":  0.163577
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  1,
+                                                         "total":  899,
+                                                         "minimum":  899,
+                                                         "maximum":  899,
+                                                         "imbalanceRatio":  0
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "horizontal-balanced-smoke",
+                          "category":  "safe-envelope",
+                          "topology":  "balanced-2x2-6p",
+                          "profile":  "smoke",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  25,
+                                         "accepted":  25,
+                                         "succeeded":  25,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  1.038059,
+                                        "acceptedPerSecond":  1.038059,
+                                        "completedPerSecond":  1.038059,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  1.0,
+                                        "errorRatio":  0.0
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  25,
+                                                          "p50":  233.332,
+                                                          "p95":  767.083,
+                                                          "p99":  847.93,
+                                                          "max":  847.93
+                                                      },
+                                            "completion":  {
+                                                               "count":  25,
+                                                               "p50":  8668.939,
+                                                               "p95":  15049.626,
+                                                               "p99":  15215.809,
+                                                               "max":  15215.809
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  0,
+                                        "outboxOldestAgeSeconds":  0,
+                                        "activeExecutions":  0,
+                                        "postgresBlockedLocks":  0,
+                                        "kafkaCommandLag":  0,
+                                        "postgresActiveConnections":  1,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.088878027622123393,
+                                        "readyTasks":  0,
+                                        "workerResultsPending":  0,
+                                        "postgresTotalConnections":  41,
+                                        "workerProcessing":  0,
+                                        "totalHeapBytes":  311703576,
+                                        "kafkaResultLag":  6,
+                                        "outboxPending":  0
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "SUCCEEDED":  25
+                                                     },
+                          "durableFailureCauses":  [
+
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  150,
+                                                   "minimum":  68,
+                                                   "maximum":  82,
+                                                   "imbalanceRatio":  0.186667
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  2,
+                                                         "total":  150,
+                                                         "minimum":  60,
+                                                         "maximum":  90,
+                                                         "imbalanceRatio":  0.4
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "horizontal-balanced",
+                          "category":  "horizontal-scale",
+                          "topology":  "balanced-2x2-6p",
+                          "profile":  "capacity",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  100,
+                                         "accepted":  100,
+                                         "succeeded":  64,
+                                         "terminalFailed":  36,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.843027,
+                                        "acceptedPerSecond":  0.843027,
+                                        "completedPerSecond":  0.539537,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  0.64,
+                                        "errorRatio":  0.36
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  100,
+                                                          "p50":  418.177,
+                                                          "p95":  6316.041,
+                                                          "p99":  6938.964,
+                                                          "max":  7148.005
+                                                      },
+                                            "completion":  {
+                                                               "count":  100,
+                                                               "p50":  30428.743,
+                                                               "p95":  79153.06,
+                                                               "p99":  83905.252,
+                                                               "max":  86407.104
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  5,
+                                        "outboxOldestAgeSeconds":  0.439125,
+                                        "activeExecutions":  40,
+                                        "postgresBlockedLocks":  13,
+                                        "kafkaCommandLag":  11,
+                                        "postgresActiveConnections":  17,
+                                        "readyOldestAgeSeconds":  0.196673,
+                                        "totalProcessCpu":  0.12419841580500532,
+                                        "readyTasks":  1,
+                                        "workerResultsPending":  9,
+                                        "postgresTotalConnections":  41,
+                                        "workerProcessing":  3,
+                                        "totalHeapBytes":  416263600,
+                                        "kafkaResultLag":  104,
+                                        "outboxPending":  27
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "FAILED":  36,
+                                                         "SUCCEEDED":  64
+                                                     },
+                          "durableFailureCauses":  [
+                                                       {
+                                                           "status":  "FAILED",
+                                                           "errorCode":  "WORKER_LEASE_EXPIRED",
+                                                           "errorMessage":  "Worker stopped renewing the attempt lease",
+                                                           "count":  37
+                                                       }
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  864,
+                                                   "minimum":  422,
+                                                   "maximum":  442,
+                                                   "imbalanceRatio":  0.046296
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  2,
+                                                         "total":  827,
+                                                         "minimum":  340,
+                                                         "maximum":  487,
+                                                         "imbalanceRatio":  0.355502
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "pool-bound",
+                          "category":  "database-pool",
+                          "topology":  "single-pool2-6p",
+                          "profile":  "capacity",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  100,
+                                         "accepted":  100,
+                                         "succeeded":  20,
+                                         "terminalFailed":  80,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.891276,
+                                        "acceptedPerSecond":  0.891276,
+                                        "completedPerSecond":  0.178255,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  0.2,
+                                        "errorRatio":  0.8
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  100,
+                                                          "p50":  473.429,
+                                                          "p95":  2122.216,
+                                                          "p99":  2632.635,
+                                                          "max":  2921.574
+                                                      },
+                                            "completion":  {
+                                                               "count":  100,
+                                                               "p50":  30772.277,
+                                                               "p95":  57531.153,
+                                                               "p99":  63736.469,
+                                                               "max":  75757.959
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  41,
+                                        "outboxOldestAgeSeconds":  10.347481,
+                                        "activeExecutions":  40,
+                                        "postgresBlockedLocks":  0,
+                                        "kafkaCommandLag":  0,
+                                        "postgresActiveConnections":  3,
+                                        "readyOldestAgeSeconds":  1.144796,
+                                        "totalProcessCpu":  0.034804115758420309,
+                                        "readyTasks":  2,
+                                        "workerResultsPending":  3,
+                                        "postgresTotalConnections":  5,
+                                        "workerProcessing":  1,
+                                        "totalHeapBytes":  176295272,
+                                        "kafkaResultLag":  281,
+                                        "outboxPending":  304
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "FAILED":  80,
+                                                         "SUCCEEDED":  20
+                                                     },
+                          "durableFailureCauses":  [
+                                                       {
+                                                           "status":  "FAILED",
+                                                           "errorCode":  "WORKER_LEASE_EXPIRED",
+                                                           "errorMessage":  "Worker stopped renewing the attempt lease",
+                                                           "count":  139
+                                                       }
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  1,
+                                                   "total":  556,
+                                                   "minimum":  556,
+                                                   "maximum":  556,
+                                                   "imbalanceRatio":  0
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  1,
+                                                         "total":  307,
+                                                         "minimum":  307,
+                                                         "maximum":  307,
+                                                         "imbalanceRatio":  0
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  1,
+                                        "activeCommandConsumers":  1,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "partition-bound",
+                          "category":  "kafka-partitions",
+                          "topology":  "workers-2-c4-6p",
+                          "profile":  "capacity",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  100,
+                                         "accepted":  100,
+                                         "succeeded":  63,
+                                         "terminalFailed":  37,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.894303,
+                                        "acceptedPerSecond":  0.894303,
+                                        "completedPerSecond":  0.563411,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  0.63,
+                                        "errorRatio":  0.37
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  100,
+                                                          "p50":  279.171,
+                                                          "p95":  3339.81,
+                                                          "p99":  3400.089,
+                                                          "max":  3901.062
+                                                      },
+                                            "completion":  {
+                                                               "count":  100,
+                                                               "p50":  30885.732,
+                                                               "p95":  53513.343,
+                                                               "p99":  54587.586,
+                                                               "max":  55582.019
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  8,
+                                        "outboxOldestAgeSeconds":  0.21975,
+                                        "activeExecutions":  40,
+                                        "postgresBlockedLocks":  6,
+                                        "kafkaCommandLag":  1,
+                                        "postgresActiveConnections":  7,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.088762147998737245,
+                                        "readyTasks":  0,
+                                        "workerResultsPending":  0,
+                                        "postgresTotalConnections":  31,
+                                        "workerProcessing":  0,
+                                        "totalHeapBytes":  244409160,
+                                        "kafkaResultLag":  123,
+                                        "outboxPending":  50
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "FAILED":  37,
+                                                         "SUCCEEDED":  63
+                                                     },
+                          "durableFailureCauses":  [
+                                                       {
+                                                           "status":  "FAILED",
+                                                           "errorCode":  "WORKER_LEASE_EXPIRED",
+                                                           "errorMessage":  "Worker stopped renewing the attempt lease",
+                                                           "count":  42
+                                                       }
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  699,
+                                                   "minimum":  262,
+                                                   "maximum":  437,
+                                                   "imbalanceRatio":  0.500715
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  1,
+                                                         "total":  656,
+                                                         "minimum":  656,
+                                                         "maximum":  656,
+                                                         "imbalanceRatio":  0
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  8,
+                                        "activeCommandConsumers":  6,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "overload",
+                          "category":  "overload",
+                          "topology":  "balanced-2x2-6p",
+                          "profile":  "overload",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  1000,
+                                         "accepted":  95,
+                                         "succeeded":  0,
+                                         "terminalFailed":  95,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  905,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  13.296736,
+                                        "acceptedPerSecond":  1.26319,
+                                        "completedPerSecond":  0.0,
+                                        "acceptanceRatio":  0.095,
+                                        "successRatio":  0.0,
+                                        "errorRatio":  1.0
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  1000,
+                                                          "p50":  3029.205,
+                                                          "p95":  7599.286,
+                                                          "p99":  9906.094,
+                                                          "max":  11387.427
+                                                      },
+                                            "completion":  {
+                                                               "count":  95,
+                                                               "p50":  44658.711,
+                                                               "p95":  57021.946,
+                                                               "p99":  62883.127,
+                                                               "max":  62883.127
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  0,
+                                        "outboxOldestAgeSeconds":  2.272324,
+                                        "activeExecutions":  142,
+                                        "postgresBlockedLocks":  18,
+                                        "kafkaCommandLag":  0,
+                                        "postgresActiveConnections":  20,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.12200709268318186,
+                                        "readyTasks":  0,
+                                        "workerResultsPending":  6,
+                                        "postgresTotalConnections":  41,
+                                        "workerProcessing":  4,
+                                        "totalHeapBytes":  304310536,
+                                        "kafkaResultLag":  281,
+                                        "outboxPending":  64
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "FAILED":  142
+                                                     },
+                          "durableFailureCauses":  [
+                                                       {
+                                                           "status":  "FAILED",
+                                                           "errorCode":  "WORKER_LEASE_EXPIRED",
+                                                           "errorMessage":  "Worker stopped renewing the attempt lease",
+                                                           "count":  181
+                                                       }
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  310,
+                                                   "minimum":  148,
+                                                   "maximum":  162,
+                                                   "imbalanceRatio":  0.090323
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  2,
+                                                         "total":  84,
+                                                         "minimum":  29,
+                                                         "maximum":  55,
+                                                         "imbalanceRatio":  0.619048
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "scheduled",
+                          "category":  "scheduling",
+                          "topology":  "balanced-2x2-6p",
+                          "profile":  "scheduled",
+                          "requiredPass":  false,
+                          "passed":  false,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  100,
+                                         "accepted":  100,
+                                         "succeeded":  100,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  4.403208,
+                                        "acceptedPerSecond":  4.403208,
+                                        "completedPerSecond":  4.403208,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  1.0,
+                                        "errorRatio":  0.0
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  100,
+                                                          "p50":  295.805,
+                                                          "p95":  548.286,
+                                                          "p99":  617.632,
+                                                          "max":  742.899
+                                                      },
+                                            "completion":  {
+                                                               "count":  100,
+                                                               "p50":  3676.547,
+                                                               "p95":  11463.874,
+                                                               "p99":  11809.079,
+                                                               "max":  11943.837
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  4,
+                                        "outboxOldestAgeSeconds":  0.459762,
+                                        "activeExecutions":  74,
+                                        "postgresBlockedLocks":  1,
+                                        "kafkaCommandLag":  2,
+                                        "postgresActiveConnections":  5,
+                                        "readyOldestAgeSeconds":  0.798259,
+                                        "totalProcessCpu":  0.1251782036323443,
+                                        "readyTasks":  2,
+                                        "workerResultsPending":  4,
+                                        "postgresTotalConnections":  41,
+                                        "workerProcessing":  0,
+                                        "totalHeapBytes":  312112384,
+                                        "kafkaResultLag":  246,
+                                        "outboxPending":  3
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "RUNNING":  63,
+                                                         "SUCCEEDED":  37
+                                                     },
+                          "durableFailureCauses":  [
+
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  568,
+                                                   "minimum":  277,
+                                                   "maximum":  291,
+                                                   "imbalanceRatio":  0.049296
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  2,
+                                                         "total":  369,
+                                                         "minimum":  179,
+                                                         "maximum":  190,
+                                                         "imbalanceRatio":  0.059621
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "scheduled-safe",
+                          "category":  "safe-envelope",
+                          "topology":  "balanced-2x2-6p",
+                          "profile":  "scheduled-safe",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  25,
+                                         "accepted":  25,
+                                         "succeeded":  25,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.895341,
+                                        "acceptedPerSecond":  0.895341,
+                                        "completedPerSecond":  0.895341,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  1.0,
+                                        "errorRatio":  0.0
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  25,
+                                                          "p50":  57.739,
+                                                          "p95":  152.872,
+                                                          "p99":  478.088,
+                                                          "max":  478.088
+                                                      },
+                                            "completion":  {
+                                                               "count":  25,
+                                                               "p50":  699.827,
+                                                               "p95":  1840.283,
+                                                               "p99":  2831.462,
+                                                               "max":  2831.462
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  0,
+                                        "outboxOldestAgeSeconds":  0.283023,
+                                        "activeExecutions":  2,
+                                        "postgresBlockedLocks":  0,
+                                        "kafkaCommandLag":  0,
+                                        "postgresActiveConnections":  1,
+                                        "readyOldestAgeSeconds":  0,
+                                        "totalProcessCpu":  0.065095238775726524,
+                                        "readyTasks":  0,
+                                        "workerResultsPending":  3,
+                                        "postgresTotalConnections":  41,
+                                        "workerProcessing":  1,
+                                        "totalHeapBytes":  299100552,
+                                        "kafkaResultLag":  0,
+                                        "outboxPending":  5
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "SUCCEEDED":  25
+                                                     },
+                          "durableFailureCauses":  [
+
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  150,
+                                                   "minimum":  72,
+                                                   "maximum":  78,
+                                                   "imbalanceRatio":  0.08
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  2,
+                                                         "total":  150,
+                                                         "minimum":  54,
+                                                         "maximum":  96,
+                                                         "imbalanceRatio":  0.56
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      },
+                      {
+                          "id":  "soak",
+                          "category":  "soak",
+                          "topology":  "workers-2-6p",
+                          "profile":  "soak",
+                          "requiredPass":  true,
+                          "passed":  true,
+                          "failure":  "",
+                          "counts":  {
+                                         "attempted":  120,
+                                         "accepted":  120,
+                                         "succeeded":  120,
+                                         "terminalFailed":  0,
+                                         "rejected":  0,
+                                         "unexpectedResponses":  0,
+                                         "timedOut":  0,
+                                         "transportErrors":  0
+                                     },
+                          "rates":  {
+                                        "attemptedPerSecond":  0.500571,
+                                        "acceptedPerSecond":  0.500571,
+                                        "completedPerSecond":  0.500571,
+                                        "acceptanceRatio":  1.0,
+                                        "successRatio":  1.0,
+                                        "errorRatio":  0.0
+                                    },
+                          "latencyMs":  {
+                                            "start":  {
+                                                          "count":  120,
+                                                          "p50":  76.581,
+                                                          "p95":  117.286,
+                                                          "p99":  223.286,
+                                                          "max":  241.506
+                                                      },
+                                            "completion":  {
+                                                               "count":  120,
+                                                               "p50":  1907.791,
+                                                               "p95":  2481.007,
+                                                               "p99":  4373.55,
+                                                               "max":  6364.664
+                                                           }
+                                        },
+                          "peaks":  {
+                                        "kafkaHeartbeatLag":  1,
+                                        "outboxOldestAgeSeconds":  0.27005,
+                                        "activeExecutions":  1,
+                                        "postgresBlockedLocks":  1,
+                                        "kafkaCommandLag":  8,
+                                        "postgresActiveConnections":  3,
+                                        "readyOldestAgeSeconds":  0.057323,
+                                        "totalProcessCpu":  0.019040621249265366,
+                                        "readyTasks":  1,
+                                        "workerResultsPending":  6,
+                                        "postgresTotalConnections":  32,
+                                        "workerProcessing":  2,
+                                        "totalHeapBytes":  252010448,
+                                        "kafkaResultLag":  4,
+                                        "outboxPending":  25
+                                    },
+                          "durableExecutionCounts":  {
+                                                         "SUCCEEDED":  120
+                                                     },
+                          "durableFailureCauses":  [
+
+                                                   ],
+                          "workerUsefulWork":  {
+                                                   "instances":  2,
+                                                   "total":  1200,
+                                                   "minimum":  599,
+                                                   "maximum":  601,
+                                                   "imbalanceRatio":  0.003333
+                                               },
+                          "controlPlaneUsefulWork":  {
+                                                         "instances":  1,
+                                                         "total":  1200,
+                                                         "minimum":  1200,
+                                                         "maximum":  1200,
+                                                         "imbalanceRatio":  0
+                                                     },
+                          "kafka":  {
+                                        "configuredPartitions":  6,
+                                        "configuredWorkerConsumers":  2,
+                                        "activeCommandConsumers":  2,
+                                        "assignedCommandPartitions":  6
+                                    }
+                      }
+                  ]
+}

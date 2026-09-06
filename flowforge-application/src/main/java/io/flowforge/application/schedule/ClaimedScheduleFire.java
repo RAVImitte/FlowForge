@@ -1,10 +1,13 @@
 package io.flowforge.application.schedule;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 
 public record ClaimedScheduleFire(
+        TenantId tenantId,
         UUID triggerId,
         UUID scheduleId,
         UUID workflowId,
@@ -14,6 +17,7 @@ public record ClaimedScheduleFire(
         UUID claimToken
 ) {
     public ClaimedScheduleFire {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         Objects.requireNonNull(triggerId, "triggerId must not be null");
         Objects.requireNonNull(scheduleId, "scheduleId must not be null");
         Objects.requireNonNull(workflowId, "workflowId must not be null");

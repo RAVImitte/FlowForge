@@ -2,6 +2,9 @@ package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.application.workflow.WorkflowRepository;
 import io.flowforge.application.workflow.WorkflowService;
+import io.flowforge.controlplane.config.FlowForgeSecurityProperties;
+import io.flowforge.controlplane.config.TenantContextFilter;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 import io.flowforge.domain.workflow.WorkflowDraft;
@@ -12,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Instant;
 import java.util.List;
@@ -19,6 +23,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -46,14 +51,17 @@ class WorkflowControllerTest {
     void setUp() {
         repository = mock(WorkflowRepository.class);
         WorkflowService service = new WorkflowService(repository);
+        FlowForgeSecurityProperties properties = new FlowForgeSecurityProperties();
+        properties.setEnabled(false);
         mvc = MockMvcBuilders.standaloneSetup(new WorkflowController(service))
                 .setControllerAdvice(new ApiExceptionHandler())
+                .addFilters(new TenantContextFilter(properties, JsonMapper.builder().build()))
                 .build();
     }
 
     @Test
     void createsAWorkflowAndReturnsLocationAndEtag() throws Exception {
-        when(repository.create(any())).thenReturn(workflow());
+        when(repository.create(eq(TenantId.LOCAL), any())).thenReturn(workflow());
 
         mvc.perform(post("/api/v1/workflows")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -61,6 +69,7 @@ class WorkflowControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/v1/workflows/" + WORKFLOW_ID))
                 .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(jsonPath("$.tenantId").value("local"))
                 .andExpect(jsonPath("$.versionStatus").value("DRAFT"));
     }
 
@@ -86,8 +95,8 @@ class WorkflowControllerTest {
                   "dependencies": []
                 }
                 """;
-        when(repository.create(any())).thenAnswer(invocation -> {
-            WorkflowDraft draft = invocation.getArgument(0, WorkflowDraft.class);
+        when(repository.create(eq(TenantId.LOCAL), any())).thenAnswer(invocation -> {
+            WorkflowDraft draft = invocation.getArgument(1, WorkflowDraft.class);
             return workflow(draft.tasks().getFirst());
         });
 
@@ -117,8 +126,8 @@ class WorkflowControllerTest {
                   "dependencies": []
                 }
                 """;
-        when(repository.create(any())).thenAnswer(invocation -> {
-            WorkflowDraft draft = invocation.getArgument(0, WorkflowDraft.class);
+        when(repository.create(eq(TenantId.LOCAL), any())).thenAnswer(invocation -> {
+            WorkflowDraft draft = invocation.getArgument(1, WorkflowDraft.class);
             return workflow(draft.maxConcurrentExecutions(), draft.tasks().getFirst());
         });
 
@@ -175,6 +184,7 @@ class WorkflowControllerTest {
         Instant now = Instant.parse("2026-08-28T10:00:00Z");
         return new WorkflowDefinition(
                 WORKFLOW_ID,
+                TenantId.LOCAL,
                 0,
                 WorkflowLifecycleStatus.ACTIVE,
                 1,

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "telemetry-pause",
+  "actions": [
+    {
+      "service": "prometheus",
+      "operation": "pause",
+      "delaySeconds": 5,
+      "durationSeconds": 5
+    },
+    {
+      "service": "otel-collector",
+      "operation": "pause",
+      "delaySeconds": 5,
+      "durationSeconds": 5
+    }
+  ],
+  "thresholds": {
+    "maximumRecoverySeconds": 45,
+    "maximumSuppressedCommandDuplicates": 20,
+    "maximumDurableFailures": 0,
+    "requireTelemetryRecovery": true
+  }
+}

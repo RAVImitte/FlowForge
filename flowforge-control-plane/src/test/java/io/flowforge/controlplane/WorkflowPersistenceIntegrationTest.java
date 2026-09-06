@@ -1,7 +1,9 @@
 package io.flowforge.controlplane;
 
 import io.flowforge.application.workflow.WorkflowConflictException;
+import io.flowforge.application.workflow.WorkflowNotFoundException;
 import io.flowforge.application.workflow.WorkflowService;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
 import io.flowforge.domain.workflow.TaskReliabilityPolicy;
@@ -13,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.annotation.Transactional;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -47,17 +50,66 @@ class WorkflowPersistenceIntegrationTest {
     @Autowired
     WorkflowService service;
 
+    @Autowired
+    JdbcClient jdbc;
+
+    @Test
+    void isolatesWorkflowReadsAndMutationsByTenant() {
+        TenantId tenantA = registerTenant("merchant-a", "Merchant A");
+        TenantId tenantB = registerTenant("merchant-b", "Merchant B");
+        WorkflowDefinition workflowA = service.create(tenantA, orderWorkflow("Tenant A workflow"));
+        WorkflowDefinition workflowB = service.create(tenantB, orderWorkflow("Tenant B workflow"));
+
+        assertThat(workflowA.tenantId()).isEqualTo(tenantA);
+        assertThat(workflowB.tenantId()).isEqualTo(tenantB);
+        assertThat(service.list(tenantA, 0, 20).items())
+                .extracting(WorkflowDefinition::id)
+                .containsExactly(workflowA.id());
+        assertThat(service.list(tenantB, 0, 20).items())
+                .extracting(WorkflowDefinition::id)
+                .containsExactly(workflowB.id());
+
+        assertThatThrownBy(() -> service.get(tenantB, workflowA.id()))
+                .isInstanceOf(WorkflowNotFoundException.class);
+        assertThatThrownBy(() -> service.update(
+                tenantB, workflowA.id(), workflowA.lockVersion(), orderWorkflow("Cross-tenant update")
+        )).isInstanceOf(WorkflowNotFoundException.class);
+        assertThatThrownBy(() -> service.publish(tenantB, workflowA.id(), workflowA.lockVersion()))
+                .isInstanceOf(WorkflowNotFoundException.class);
+        assertThatThrownBy(() -> service.archive(tenantB, workflowA.id(), workflowA.lockVersion()))
+                .isInstanceOf(WorkflowNotFoundException.class);
+
+        assertThat(service.get(tenantA, workflowA.id()).description()).isEqualTo("Tenant A workflow");
+    }
+
+    @Test
+    void assignsTheTransitionalLocalTenantToNewWorkflowWrites() {
+        WorkflowDefinition workflow = service.create(TenantId.LOCAL, orderWorkflow("Tenant foundation"));
+
+        String tenantId = jdbc.sql("SELECT tenant_id FROM workflow_definition WHERE id = :id")
+                .param("id", workflow.id())
+                .query(String.class)
+                .single();
+        long registryRows = jdbc.sql("SELECT COUNT(*) FROM tenant_registry WHERE tenant_id = 'local'")
+                .query(Long.class)
+                .single();
+
+        assertThat(tenantId).isEqualTo("local");
+        assertThat(registryRows).isEqualTo(1);
+    }
+
     @Test
     void persistsPublishesAndCreatesANewDraftWithoutMutatingPublishedVersion() {
-        WorkflowDefinition draft = service.create(orderWorkflow("Initial"));
+        WorkflowDefinition draft = service.create(TenantId.LOCAL, orderWorkflow("Initial"));
         assertThat(draft.definitionVersion()).isEqualTo(1);
         assertThat(draft.versionStatus()).isEqualTo(WorkflowVersionStatus.DRAFT);
 
-        WorkflowDefinition published = service.publish(draft.id(), draft.lockVersion());
+        WorkflowDefinition published = service.publish(TenantId.LOCAL, draft.id(), draft.lockVersion());
         assertThat(published.versionStatus()).isEqualTo(WorkflowVersionStatus.PUBLISHED);
         assertThat(published.publishedAt()).isNotNull();
 
         WorkflowDefinition nextDraft = service.update(
+                TenantId.LOCAL,
                 published.id(),
                 published.lockVersion(),
                 orderWorkflow("Second version")
@@ -65,18 +117,19 @@ class WorkflowPersistenceIntegrationTest {
         assertThat(nextDraft.definitionVersion()).isEqualTo(2);
         assertThat(nextDraft.versionStatus()).isEqualTo(WorkflowVersionStatus.DRAFT);
         assertThat(nextDraft.description()).isEqualTo("Second version");
-        assertThat(service.list(0, 20).totalElements()).isEqualTo(1);
+        assertThat(service.list(TenantId.LOCAL, 0, 20).totalElements()).isEqualTo(1);
     }
 
     @Test
     void rejectsAStaleWriterAndArchivesWithoutDeletingHistory() {
-        WorkflowDefinition created = service.create(orderWorkflow("Archive me"));
+        WorkflowDefinition created = service.create(TenantId.LOCAL, orderWorkflow("Archive me"));
 
-        assertThatThrownBy(() -> service.update(created.id(), 99, orderWorkflow("stale")))
+        assertThatThrownBy(() -> service.update(
+                TenantId.LOCAL, created.id(), 99, orderWorkflow("stale")))
                 .isInstanceOf(WorkflowConflictException.class);
 
-        service.archive(created.id(), created.lockVersion());
-        assertThatThrownBy(() -> service.get(created.id()))
+        service.archive(TenantId.LOCAL, created.id(), created.lockVersion());
+        assertThatThrownBy(() -> service.get(TenantId.LOCAL, created.id()))
                 .hasMessageContaining("Workflow not found");
     }
 
@@ -99,8 +152,8 @@ class WorkflowPersistenceIntegrationTest {
                 List.of()
         );
 
-        WorkflowDefinition stored = service.create(draft);
-        WorkflowDefinition reloaded = service.get(stored.id());
+        WorkflowDefinition stored = service.create(TenantId.LOCAL, draft);
+        WorkflowDefinition reloaded = service.get(TenantId.LOCAL, stored.id());
 
         assertThat(reloaded.tasks().getFirst().reliabilityPolicy()).isEqualTo(policy);
     }
@@ -115,5 +168,16 @@ class WorkflowPersistenceIntegrationTest {
                 ),
                 List.of(new TaskDependency("PROCESS_PAYMENT", "VALIDATE_ORDER"))
         );
+    }
+
+    private TenantId registerTenant(String tenantId, String displayName) {
+        jdbc.sql("""
+                INSERT INTO tenant_registry(tenant_id, display_name, status)
+                VALUES (:tenantId, :displayName, 'ACTIVE')
+                """)
+                .param("tenantId", tenantId)
+                .param("displayName", displayName)
+                .update();
+        return new TenantId(tenantId);
     }
 }

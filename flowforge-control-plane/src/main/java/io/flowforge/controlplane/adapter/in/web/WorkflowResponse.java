@@ -3,6 +3,7 @@ package io.flowforge.controlplane.adapter.in.web;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
 import io.flowforge.domain.workflow.TaskReliabilityPolicy;
+import io.flowforge.domain.workflow.SecretReference;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 
 import java.time.Instant;
@@ -12,6 +13,7 @@ import java.util.UUID;
 
 public record WorkflowResponse(
         UUID id,
+        String tenantId,
         long lockVersion,
         String lifecycleStatus,
         int definitionVersion,
@@ -28,6 +30,7 @@ public record WorkflowResponse(
     static WorkflowResponse from(WorkflowDefinition workflow) {
         return new WorkflowResponse(
                 workflow.id(),
+                workflow.tenantId().value(),
                 workflow.lockVersion(),
                 workflow.lifecycleStatus().name(),
                 workflow.definitionVersion(),
@@ -48,6 +51,7 @@ public record WorkflowResponse(
             String name,
             String type,
             Map<String, Object> configuration,
+            Map<String, SecretReferenceResponse> secretReferences,
             ReliabilityPolicyResponse reliabilityPolicy,
             Integer maxConcurrency
     ) {
@@ -57,11 +61,23 @@ public record WorkflowResponse(
                     task.name(),
                     task.type(),
                     task.configuration(),
+                    task.secretReferences().entrySet().stream().collect(
+                            java.util.stream.Collectors.toUnmodifiableMap(
+                                    Map.Entry::getKey,
+                                    entry -> SecretReferenceResponse.from(entry.getValue())
+                            )
+                    ),
                     task.reliabilityPolicy().isDefault()
                             ? null
                             : ReliabilityPolicyResponse.from(task.reliabilityPolicy()),
                     task.maxConcurrency()
             );
+        }
+    }
+
+    public record SecretReferenceResponse(String provider, String name, String version) {
+        static SecretReferenceResponse from(SecretReference reference) {
+            return new SecretReferenceResponse(reference.provider(), reference.name(), reference.version());
         }
     }
 

@@ -1,5 +1,7 @@
 package io.flowforge.controlplane.adapter.out.messaging;
 
+import io.flowforge.kafka.KafkaTenantHeader;
+import io.flowforge.messaging.FlowForgeHeaders;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -24,10 +26,11 @@ public class KafkaOutboxMessageSender implements OutboxMessageSender {
                 message.recordKey(),
                 message.payload()
         );
-        addHeader(record, "flowforge-event-id", message.id().toString());
-        addHeader(record, "flowforge-event-type", message.eventType());
-        addHeader(record, "flowforge-schema-version", Integer.toString(message.schemaVersion()));
-        addHeader(record, "flowforge-correlation-id", message.workflowExecutionId().toString());
+        addHeader(record, FlowForgeHeaders.EVENT_ID, message.id().toString());
+        addHeader(record, FlowForgeHeaders.EVENT_TYPE, message.eventType());
+        addHeader(record, FlowForgeHeaders.SCHEMA_VERSION, Integer.toString(message.schemaVersion()));
+        addHeader(record, FlowForgeHeaders.CORRELATION_ID, message.workflowExecutionId().toString());
+        KafkaTenantHeader.add(record.headers(), message.tenantId());
         kafkaTemplate.send(record).get(timeout.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 

@@ -3,14 +3,20 @@ package io.flowforge.controlplane.adapter.out.messaging;
 import io.flowforge.controlplane.config.OutboxProperties;
 import io.flowforge.observability.LogContext;
 import io.flowforge.observability.LogFields;
+import io.flowforge.observability.TraceContextPropagation;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Gauge;
+import io.opentelemetry.context.Scope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -52,19 +58,38 @@ public class OutboxPublisher {
                     clock.instant(),
                     properties.leaseDuration()
             );
-            int published = 0;
-            for (OutboxMessage message : messages) {
-                if (publish(message)) published++;
+            try (var executor = Executors.newFixedThreadPool(
+                    properties.publishConcurrency(),
+                    Thread.ofVirtual().name("flowforge-outbox-publisher-", 0).factory()
+            )) {
+                List<Future<Boolean>> publications = executor.invokeAll(
+                        messages.stream().<java.util.concurrent.Callable<Boolean>>map(
+                                message -> () -> publish(message)
+                        ).toList()
+                );
+                int published = 0;
+                for (Future<Boolean> publication : publications) {
+                    try {
+                        if (publication.get()) published++;
+                    } catch (ExecutionException failure) {
+                        LOGGER.error("Unexpected outbox publication failure", failure.getCause());
+                    }
+                }
+                return published;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return 0;
             }
-            return published;
         } finally {
             publishing.set(false);
         }
     }
 
     private boolean publish(OutboxMessage message) {
-        try (LogContext ignored = LogContext.open(
-                LogFields.CORRELATION_ID, message.workflowExecutionId(),
+        try (Scope traceScope = TraceContextPropagation.restore(message.traceContext());
+             LogContext ignored = LogContext.open(
+                     LogFields.TENANT_ID, message.tenantId(),
+                     LogFields.CORRELATION_ID, message.workflowExecutionId(),
                 LogFields.EVENT_ID, message.id(),
                 LogFields.WORKFLOW_EXECUTION_ID, message.workflowExecutionId(),
                 LogFields.TASK_EXECUTION_ID, message.taskExecutionId(),

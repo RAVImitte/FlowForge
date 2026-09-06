@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "name": "phase-6-resilience-matrix",
+  "scenarios": [
+    {
+      "id": "postgres-pause",
+      "dependency": "postgres",
+      "topology": "single-6p",
+      "profile": "resilience",
+      "faultPlan": "postgres-pause",
+      "requiredPass": true
+    },
+    {
+      "id": "kafka-pause",
+      "dependency": "kafka",
+      "topology": "single-6p",
+      "profile": "resilience",
+      "faultPlan": "kafka-pause",
+      "requiredPass": true
+    },
+    {
+      "id": "redis-loss",
+      "dependency": "redis",
+      "topology": "single-6p",
+      "profile": "resilience-coordination",
+      "faultPlan": "redis-loss",
+      "requiredPass": true
+    },
+    {
+      "id": "telemetry-pause",
+      "dependency": "prometheus-and-otel-collector",
+      "topology": "single-6p",
+      "profile": "resilience",
+      "faultPlan": "telemetry-pause",
+      "requiredPass": true
+    }
+  ]
+}

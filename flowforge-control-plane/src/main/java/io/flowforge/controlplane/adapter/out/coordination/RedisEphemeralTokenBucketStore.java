@@ -44,7 +44,7 @@ public class RedisEphemeralTokenBucketStore implements EphemeralTokenBucketStore
     public void replaceIfNewer(TokenBucketSnapshot snapshot, Duration ttl) {
         Long result = redis.execute(
                 REPLACE_IF_NEWER,
-                List.of(keyspace.rateLimitKey(snapshot.bucketKey())),
+                List.of(keyspace.rateLimitKey(snapshot.tenantId(), snapshot.bucketKey())),
                 Long.toString(snapshot.stateVersion()),
                 Integer.toString(snapshot.policy().capacity()),
                 Integer.toString(snapshot.policy().refillTokens()),

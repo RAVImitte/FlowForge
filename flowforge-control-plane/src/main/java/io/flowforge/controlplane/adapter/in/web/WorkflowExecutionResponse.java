@@ -14,6 +14,7 @@ import java.util.UUID;
 
 public record WorkflowExecutionResponse(
         UUID id,
+        String tenantId,
         UUID workflowId,
         int workflowVersion,
         WorkflowRunStatus status,
@@ -29,6 +30,7 @@ public record WorkflowExecutionResponse(
         var workflow = execution.workflow();
         return new WorkflowExecutionResponse(
                 workflow.id(),
+                execution.tenantId().value(),
                 workflow.workflowId(),
                 workflow.workflowVersion(),
                 workflow.status(),

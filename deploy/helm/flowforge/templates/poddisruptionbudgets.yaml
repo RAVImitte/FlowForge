@@ -1,0 +1,33 @@
+{{- if .Values.controlPlane.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flowforge.fullname" . }}-control-plane
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  minAvailable: {{ .Values.controlPlane.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "flowforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+{{- end }}
+{{- if and .Values.controlPlane.podDisruptionBudget.enabled .Values.worker.podDisruptionBudget.enabled }}
+---
+{{- end }}
+{{- if .Values.worker.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "flowforge.fullname" . }}-worker
+  labels:
+    {{- include "flowforge.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  minAvailable: {{ .Values.worker.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "flowforge.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+{{- end }}

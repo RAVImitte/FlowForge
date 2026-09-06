@@ -1,9 +1,12 @@
 package io.flowforge.application.coordination;
 
+import io.flowforge.domain.tenancy.TenantId;
+
 import java.time.Instant;
 import java.util.Objects;
 
 public record TokenBucketSnapshot(
+        TenantId tenantId,
         String bucketKey,
         TokenBucketPolicy policy,
         double availableTokens,
@@ -11,6 +14,7 @@ public record TokenBucketSnapshot(
         long stateVersion
 ) {
     public TokenBucketSnapshot {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
         if (bucketKey == null || bucketKey.isBlank()) {
             throw new IllegalArgumentException("bucketKey must not be blank");
         }

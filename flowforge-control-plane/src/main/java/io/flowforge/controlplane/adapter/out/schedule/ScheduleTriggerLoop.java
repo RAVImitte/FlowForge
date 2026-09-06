@@ -3,6 +3,8 @@ package io.flowforge.controlplane.adapter.out.schedule;
 import io.flowforge.application.schedule.ScheduleFireRunResult;
 import io.flowforge.application.schedule.ScheduleFireService;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +27,7 @@ public class ScheduleTriggerLoop implements ApplicationRunner {
 
     private final ScheduleFireService service;
     private final MeterRegistry meters;
+    private final ObservationRegistry observations;
     private final int materializationBatchSize;
     private final int processingBatchSize;
     private final AtomicBoolean running = new AtomicBoolean();
@@ -32,11 +35,13 @@ public class ScheduleTriggerLoop implements ApplicationRunner {
     public ScheduleTriggerLoop(
             ScheduleFireService service,
             MeterRegistry meters,
+            ObservationRegistry observations,
             @Value("${flowforge.scheduling.materialization-batch-size:100}") int materializationBatchSize,
             @Value("${flowforge.scheduling.processing-batch-size:100}") int processingBatchSize
     ) {
         this.service = service;
         this.meters = meters;
+        this.observations = observations;
         this.materializationBatchSize = validBatchSize(materializationBatchSize);
         this.processingBatchSize = validBatchSize(processingBatchSize);
     }
@@ -49,7 +54,8 @@ public class ScheduleTriggerLoop implements ApplicationRunner {
     @Scheduled(fixedDelayString = "${flowforge.scheduling.poll-interval-ms:1000}")
     public void processSchedules() {
         if (!running.compareAndSet(false, true)) return;
-        try {
+        Observation observation = Observation.start("flowforge.schedule.process", observations);
+        try (Observation.Scope ignored = observation.openScope()) {
             ScheduleFireRunResult result = service.runOnce(
                     materializationBatchSize,
                     processingBatchSize
@@ -76,10 +82,14 @@ public class ScheduleTriggerLoop implements ApplicationRunner {
                         result.released()
                 );
             }
+            observation.lowCardinalityKeyValue("flowforge.outcome", "success");
         } catch (RuntimeException failure) {
+            observation.error(failure);
+            observation.lowCardinalityKeyValue("flowforge.outcome", "error");
             meters.counter("flowforge.schedules.loop.failures").increment();
             LOGGER.error("Schedule trigger processing failed", failure);
         } finally {
+            observation.stop();
             running.set(false);
         }
     }

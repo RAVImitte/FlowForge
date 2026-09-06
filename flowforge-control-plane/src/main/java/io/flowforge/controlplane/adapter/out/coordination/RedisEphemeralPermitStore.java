@@ -2,6 +2,7 @@ package io.flowforge.controlplane.adapter.out.coordination;
 
 import io.flowforge.application.coordination.CoordinationPermit;
 import io.flowforge.application.coordination.EphemeralPermitStore;
+import io.flowforge.domain.tenancy.TenantId;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -78,6 +79,7 @@ public class RedisEphemeralPermitStore implements EphemeralPermitStore {
     public boolean tryAcquire(CoordinationPermit permit, int limit, Instant now, Duration ttlPadding) {
         long result = execute(
                 ACQUIRE,
+                permit.tenantId(),
                 permit.resourceKey(),
                 Long.toString(now.toEpochMilli()),
                 permit.token().toString(),
@@ -92,6 +94,7 @@ public class RedisEphemeralPermitStore implements EphemeralPermitStore {
     public boolean renew(CoordinationPermit permit, Instant now, Duration ttlPadding) {
         long result = execute(
                 RENEW,
+                permit.tenantId(),
                 permit.resourceKey(),
                 Long.toString(now.toEpochMilli()),
                 permit.token().toString(),
@@ -102,9 +105,16 @@ public class RedisEphemeralPermitStore implements EphemeralPermitStore {
     }
 
     @Override
-    public boolean release(String resourceKey, UUID token, Instant now, Duration ttlPadding) {
+    public boolean release(
+            TenantId tenantId,
+            String resourceKey,
+            UUID token,
+            Instant now,
+            Duration ttlPadding
+    ) {
         long result = execute(
                 RELEASE,
+                tenantId,
                 resourceKey,
                 Long.toString(now.toEpochMilli()),
                 token.toString(),
@@ -115,6 +125,7 @@ public class RedisEphemeralPermitStore implements EphemeralPermitStore {
 
     @Override
     public void replace(
+            TenantId tenantId,
             String resourceKey,
             List<CoordinationPermit> permits,
             Instant now,
@@ -128,16 +139,23 @@ public class RedisEphemeralPermitStore implements EphemeralPermitStore {
                     arguments.add(permit.token().toString());
                     arguments.add(Long.toString(permit.expiresAt().toEpochMilli()));
                 });
-        execute(REPLACE, resourceKey, arguments.toArray(String[]::new));
+        execute(REPLACE, tenantId, resourceKey, arguments.toArray(String[]::new));
     }
 
     @Override
-    public long activeCount(String resourceKey, Instant now) {
-        return execute(ACTIVE_COUNT, resourceKey, Long.toString(now.toEpochMilli()));
+    public long activeCount(TenantId tenantId, String resourceKey, Instant now) {
+        return execute(ACTIVE_COUNT, tenantId, resourceKey, Long.toString(now.toEpochMilli()));
     }
 
-    private long execute(DefaultRedisScript<Long> script, String resourceKey, String... arguments) {
-        Long result = redis.execute(script, List.of(keyspace.permitKey(resourceKey)), (Object[]) arguments);
+    private long execute(
+            DefaultRedisScript<Long> script,
+            TenantId tenantId,
+            String resourceKey,
+            String... arguments
+    ) {
+        Long result = redis.execute(
+                script, List.of(keyspace.permitKey(tenantId, resourceKey)), (Object[]) arguments
+        );
         if (result == null) throw new IllegalStateException("Redis coordination script returned no result");
         return result;
     }

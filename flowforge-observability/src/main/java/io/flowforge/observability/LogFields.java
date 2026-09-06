@@ -12,6 +12,7 @@ public final class LogFields {
     public static final String KAFKA_TOPIC = "kafka_topic";
     public static final String TASK_EXECUTION_ID = "task_execution_id";
     public static final String TASK_KEY = "task_key";
+    public static final String TENANT_ID = "tenant_id";
     public static final String WORKER_ID = "worker_id";
     public static final String WORKFLOW_EXECUTION_ID = "workflow_execution_id";
 

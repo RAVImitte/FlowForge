@@ -7,6 +7,7 @@ import java.time.Duration;
 @ConfigurationProperties("flowforge.outbox")
 public record OutboxProperties(
         int batchSize,
+        int publishConcurrency,
         Duration leaseDuration,
         Duration publishTimeout,
         String instanceId
@@ -14,6 +15,9 @@ public record OutboxProperties(
     public OutboxProperties {
         if (batchSize < 1 || batchSize > 1_000) {
             throw new IllegalArgumentException("Outbox batch size must be between 1 and 1000");
+        }
+        if (publishConcurrency < 1 || publishConcurrency > 100) {
+            throw new IllegalArgumentException("Outbox publish concurrency must be between 1 and 100");
         }
         if (leaseDuration == null || leaseDuration.isZero() || leaseDuration.isNegative()) {
             throw new IllegalArgumentException("Outbox lease duration must be positive");

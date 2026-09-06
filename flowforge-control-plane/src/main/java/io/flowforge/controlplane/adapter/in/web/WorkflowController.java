@@ -1,10 +1,13 @@
 package io.flowforge.controlplane.adapter.in.web;
 
 import io.flowforge.application.workflow.WorkflowService;
+import io.flowforge.controlplane.config.TenantContextFilter;
+import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.workflow.TaskDefinition;
 import io.flowforge.domain.workflow.TaskDependency;
 import io.flowforge.domain.workflow.WorkflowDefinition;
 import io.flowforge.domain.workflow.WorkflowDraft;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -33,8 +36,12 @@ public class WorkflowController {
     }
 
     @PostMapping
-    ResponseEntity<WorkflowResponse> create(@Valid @RequestBody WorkflowRequest request) {
-        WorkflowDefinition created = service.create(toDraft(request));
+    ResponseEntity<WorkflowResponse> create(
+            HttpServletRequest httpRequest,
+            @Valid @RequestBody WorkflowRequest request
+    ) {
+        TenantId tenantId = TenantContextFilter.requireTenant(httpRequest);
+        WorkflowDefinition created = service.create(tenantId, toDraft(request));
         return ResponseEntity
                 .created(URI.create("/api/v1/workflows/" + created.id()))
                 .eTag(etag(created.lockVersion()))
@@ -42,8 +49,8 @@ public class WorkflowController {
     }
 
     @GetMapping("/{id}")
-    ResponseEntity<WorkflowResponse> get(@PathVariable UUID id) {
-        WorkflowDefinition workflow = service.get(id);
+    ResponseEntity<WorkflowResponse> get(HttpServletRequest request, @PathVariable UUID id) {
+        WorkflowDefinition workflow = service.get(TenantContextFilter.requireTenant(request), id);
         return ResponseEntity.ok()
                 .eTag(etag(workflow.lockVersion()))
                 .body(WorkflowResponse.from(workflow));
@@ -51,19 +58,28 @@ public class WorkflowController {
 
     @GetMapping
     WorkflowPageResponse list(
+            HttpServletRequest request,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size
     ) {
-        return WorkflowPageResponse.from(service.list(page, size));
+        return WorkflowPageResponse.from(
+                service.list(TenantContextFilter.requireTenant(request), page, size)
+        );
     }
 
     @PutMapping("/{id}")
     ResponseEntity<WorkflowResponse> update(
+            HttpServletRequest httpRequest,
             @PathVariable UUID id,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @Valid @RequestBody WorkflowRequest request
     ) {
-        WorkflowDefinition updated = service.update(id, parseEtag(ifMatch), toDraft(request));
+        WorkflowDefinition updated = service.update(
+                TenantContextFilter.requireTenant(httpRequest),
+                id,
+                parseEtag(ifMatch),
+                toDraft(request)
+        );
         return ResponseEntity.ok()
                 .eTag(etag(updated.lockVersion()))
                 .body(WorkflowResponse.from(updated));
@@ -71,10 +87,13 @@ public class WorkflowController {
 
     @PostMapping("/{id}/publish")
     ResponseEntity<WorkflowResponse> publish(
+            HttpServletRequest request,
             @PathVariable UUID id,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch
     ) {
-        WorkflowDefinition published = service.publish(id, parseEtag(ifMatch));
+        WorkflowDefinition published = service.publish(
+                TenantContextFilter.requireTenant(request), id, parseEtag(ifMatch)
+        );
         return ResponseEntity.ok()
                 .eTag(etag(published.lockVersion()))
                 .body(WorkflowResponse.from(published));
@@ -82,10 +101,11 @@ public class WorkflowController {
 
     @DeleteMapping("/{id}")
     ResponseEntity<Void> archive(
+            HttpServletRequest request,
             @PathVariable UUID id,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch
     ) {
-        service.archive(id, parseEtag(ifMatch));
+        service.archive(TenantContextFilter.requireTenant(request), id, parseEtag(ifMatch));
         return ResponseEntity.noContent().build();
     }
 
@@ -96,6 +116,14 @@ public class WorkflowController {
                         task.name(),
                         task.type(),
                         task.configuration(),
+                        task.secretReferences() == null
+                                ? java.util.Map.of()
+                                : task.secretReferences().entrySet().stream().collect(
+                                        java.util.stream.Collectors.toUnmodifiableMap(
+                                                java.util.Map.Entry::getKey,
+                                                entry -> entry.getValue().toDomain()
+                                        )
+                                ),
                         task.reliabilityPolicy() == null
                                 ? null
                                 : task.reliabilityPolicy().toDomain(),

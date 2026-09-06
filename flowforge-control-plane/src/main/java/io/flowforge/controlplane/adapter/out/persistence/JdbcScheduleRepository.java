@@ -12,6 +12,7 @@ import io.flowforge.domain.schedule.ScheduleStatus;
 import io.flowforge.domain.schedule.ScheduleType;
 import io.flowforge.domain.schedule.WorkflowSchedule;
 import io.flowforge.domain.schedule.WorkflowScheduleDraft;
+import io.flowforge.domain.tenancy.TenantId;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,10 +31,10 @@ import java.util.UUID;
 @Repository
 public class JdbcScheduleRepository implements ScheduleRepository {
     private static final String SELECT_ACTIVE = """
-            SELECT id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
+            SELECT id, tenant_id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
                    misfire_policy, status, next_fire_at, lock_version, created_at, updated_at
               FROM workflow_schedule
-             WHERE id = :id AND status <> 'DELETED'
+             WHERE tenant_id = :tenantId AND id = :id AND status <> 'DELETED'
             """;
 
     private final JdbcClient jdbc;
@@ -44,31 +45,45 @@ public class JdbcScheduleRepository implements ScheduleRepository {
 
     @Override
     @Transactional
-    public WorkflowSchedule create(WorkflowScheduleDraft draft, Instant nextFireAt, Instant now) {
+    public WorkflowSchedule create(
+            TenantId tenantId,
+            WorkflowScheduleDraft draft,
+            Instant nextFireAt,
+            Instant now
+    ) {
         UUID id = UUID.randomUUID();
-        writeInsert(id, draft, nextFireAt, now);
-        return findById(id).orElseThrow();
+        writeInsert(tenantId, id, draft, nextFireAt, now);
+        return findById(tenantId, id).orElseThrow();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public Optional<WorkflowSchedule> findById(UUID id) {
-        return jdbc.sql(SELECT_ACTIVE).param("id", id).query(this::map).optional();
+    public Optional<WorkflowSchedule> findById(TenantId tenantId, UUID id) {
+        return jdbc.sql(SELECT_ACTIVE)
+                .param("tenantId", tenantId.value())
+                .param("id", id)
+                .query(this::map)
+                .optional();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public PageResult<WorkflowSchedule> findAll(int page, int size) {
-        long total = jdbc.sql("SELECT COUNT(*) FROM workflow_schedule WHERE status <> 'DELETED'")
+    public PageResult<WorkflowSchedule> findAll(TenantId tenantId, int page, int size) {
+        long total = jdbc.sql("""
+                SELECT COUNT(*) FROM workflow_schedule
+                 WHERE tenant_id = :tenantId AND status <> 'DELETED'
+                """)
+                .param("tenantId", tenantId.value())
                 .query(Long.class).single();
         List<WorkflowSchedule> items = jdbc.sql("""
-                SELECT id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
+                SELECT id, tenant_id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
                        misfire_policy, status, next_fire_at, lock_version, created_at, updated_at
                   FROM workflow_schedule
-                 WHERE status <> 'DELETED'
+                 WHERE tenant_id = :tenantId AND status <> 'DELETED'
                  ORDER BY created_at DESC, id
                  LIMIT :limit OFFSET :offset
                 """)
+                .param("tenantId", tenantId.value())
                 .param("limit", size)
                 .param("offset", page * size)
                 .query(this::map)
@@ -79,13 +94,14 @@ public class JdbcScheduleRepository implements ScheduleRepository {
     @Override
     @Transactional
     public WorkflowSchedule update(
+            TenantId tenantId,
             UUID id,
             long expectedLockVersion,
             WorkflowScheduleDraft draft,
             Instant nextFireAt,
             Instant now
     ) {
-        ensureMutable(id, lockAndCheck(id, expectedLockVersion));
+        ensureMutable(id, lockAndCheck(tenantId, id, expectedLockVersion));
         ScheduleColumns columns = columns(draft.spec());
         jdbc.sql("""
                 UPDATE workflow_schedule
@@ -98,7 +114,7 @@ public class JdbcScheduleRepository implements ScheduleRepository {
                        next_fire_at = :nextFireAt,
                        lock_version = lock_version + 1,
                        updated_at = :now
-                 WHERE id = :id
+                 WHERE tenant_id = :tenantId AND id = :id
                 """)
                 .param("workflowId", draft.workflowId())
                 .param("scheduleType", draft.spec().type().name())
@@ -108,14 +124,16 @@ public class JdbcScheduleRepository implements ScheduleRepository {
                 .param("misfirePolicy", draft.misfirePolicy().name())
                 .param("nextFireAt", timestamp(nextFireAt))
                 .param("now", timestamp(now))
+                .param("tenantId", tenantId.value())
                 .param("id", id)
                 .update();
-        return findById(id).orElseThrow();
+        return findById(tenantId, id).orElseThrow();
     }
 
     @Override
     @Transactional
     public WorkflowSchedule changeStatus(
+            TenantId tenantId,
             UUID id,
             long expectedLockVersion,
             ScheduleStatus status,
@@ -125,48 +143,60 @@ public class JdbcScheduleRepository implements ScheduleRepository {
         if (status != ScheduleStatus.ACTIVE && status != ScheduleStatus.PAUSED) {
             throw new IllegalArgumentException("Only ACTIVE and PAUSED are mutable statuses");
         }
-        ensureMutable(id, lockAndCheck(id, expectedLockVersion));
+        ensureMutable(id, lockAndCheck(tenantId, id, expectedLockVersion));
         jdbc.sql("""
                 UPDATE workflow_schedule
                    SET status = :status,
                        next_fire_at = :nextFireAt,
                        lock_version = lock_version + 1,
                        updated_at = :now
-                 WHERE id = :id
+                 WHERE tenant_id = :tenantId AND id = :id
                 """)
                 .param("status", status.name())
                 .param("nextFireAt", timestamp(nextFireAt))
                 .param("now", timestamp(now))
+                .param("tenantId", tenantId.value())
                 .param("id", id)
                 .update();
-        return findById(id).orElseThrow();
+        return findById(tenantId, id).orElseThrow();
     }
 
     @Override
     @Transactional
-    public void delete(UUID id, long expectedLockVersion, Instant now) {
-        lockAndCheck(id, expectedLockVersion);
+    public void delete(TenantId tenantId, UUID id, long expectedLockVersion, Instant now) {
+        lockAndCheck(tenantId, id, expectedLockVersion);
         jdbc.sql("""
                 UPDATE workflow_schedule
                    SET status = 'DELETED',
                        lock_version = lock_version + 1,
                        updated_at = :now
-                 WHERE id = :id
-                """).param("now", timestamp(now)).param("id", id).update();
+                 WHERE tenant_id = :tenantId AND id = :id
+                """)
+                .param("tenantId", tenantId.value())
+                .param("now", timestamp(now))
+                .param("id", id)
+                .update();
     }
 
-    private void writeInsert(UUID id, WorkflowScheduleDraft draft, Instant nextFireAt, Instant now) {
+    private void writeInsert(
+            TenantId tenantId,
+            UUID id,
+            WorkflowScheduleDraft draft,
+            Instant nextFireAt,
+            Instant now
+    ) {
         ScheduleColumns columns = columns(draft.spec());
         jdbc.sql("""
                 INSERT INTO workflow_schedule(
-                    id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
+                    id, tenant_id, workflow_id, schedule_type, one_time_at, cron_expression, time_zone,
                     misfire_policy, status, next_fire_at, created_at, updated_at
                 ) VALUES (
-                    :id, :workflowId, :scheduleType, :oneTimeAt, :cronExpression, :timeZone,
+                    :id, :tenantId, :workflowId, :scheduleType, :oneTimeAt, :cronExpression, :timeZone,
                     :misfirePolicy, 'ACTIVE', :nextFireAt, :now, :now
                 )
                 """)
                 .param("id", id)
+                .param("tenantId", tenantId.value())
                 .param("workflowId", draft.workflowId())
                 .param("scheduleType", draft.spec().type().name())
                 .param("oneTimeAt", timestamp(columns.oneTimeAt()))
@@ -178,10 +208,15 @@ public class JdbcScheduleRepository implements ScheduleRepository {
                 .update();
     }
 
-    private ScheduleStatus lockAndCheck(UUID id, long expectedLockVersion) {
+    private ScheduleStatus lockAndCheck(TenantId tenantId, UUID id, long expectedLockVersion) {
         Optional<Map<String, Object>> row = jdbc.sql("""
-                SELECT lock_version, status FROM workflow_schedule WHERE id = :id FOR UPDATE
-                """).param("id", id).query((rs, rowNum) -> Map.<String, Object>of(
+                SELECT lock_version, status FROM workflow_schedule
+                 WHERE tenant_id = :tenantId AND id = :id
+                 FOR UPDATE
+                """)
+                .param("tenantId", tenantId.value())
+                .param("id", id)
+                .query((rs, rowNum) -> Map.<String, Object>of(
                         "lockVersion", rs.getLong("lock_version"),
                         "status", rs.getString("status")
                 )).optional();
@@ -214,6 +249,7 @@ public class JdbcScheduleRepository implements ScheduleRepository {
                 );
         return new WorkflowSchedule(
                 rs.getObject("id", UUID.class),
+                new TenantId(rs.getString("tenant_id")),
                 rs.getObject("workflow_id", UUID.class),
                 spec,
                 MisfirePolicy.valueOf(rs.getString("misfire_policy")),

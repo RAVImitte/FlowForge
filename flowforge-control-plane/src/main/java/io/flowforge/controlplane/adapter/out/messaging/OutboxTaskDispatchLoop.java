@@ -6,6 +6,9 @@ import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.application.execution.AdmissionBackpressureObserver;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ReadyQueueSnapshot;
+import io.flowforge.application.tenancy.TenantQuota;
+import io.flowforge.application.tenancy.TenantQuotaPolicy;
+import io.flowforge.application.tenancy.TenantQuotaProvider;
 import io.flowforge.controlplane.config.OutboxProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,7 +33,7 @@ public class OutboxTaskDispatchLoop implements ApplicationRunner {
     private final OutboxProperties properties;
     private final Clock clock;
     private final TokenBucketRateLimiter rateLimiter;
-    private final TokenBucketPolicy rateLimitPolicy;
+    private final TenantQuotaProvider quotas;
     private final AdmissionBackpressureObserver backpressureObserver;
     private final AtomicBoolean dispatching = new AtomicBoolean();
 
@@ -41,10 +44,8 @@ public class OutboxTaskDispatchLoop implements ApplicationRunner {
             Clock clock,
             @Value("${flowforge.execution.dispatch-enabled:true}") boolean inProcessDispatchEnabled,
             TokenBucketRateLimiter rateLimiter,
-            AdmissionBackpressureObserver backpressureObserver,
-            @Value("${flowforge.rate-limits.task-dispatch.capacity:200}") int capacity,
-            @Value("${flowforge.rate-limits.task-dispatch.refill-tokens:200}") int refillTokens,
-            @Value("${flowforge.rate-limits.task-dispatch.refill-period:1s}") Duration refillPeriod
+            TenantQuotaProvider quotas,
+            AdmissionBackpressureObserver backpressureObserver
     ) {
         if (inProcessDispatchEnabled) {
             throw new IllegalStateException(
@@ -55,7 +56,7 @@ public class OutboxTaskDispatchLoop implements ApplicationRunner {
         this.properties = properties;
         this.clock = clock;
         this.rateLimiter = rateLimiter;
-        this.rateLimitPolicy = new TokenBucketPolicy(capacity, refillTokens, refillPeriod);
+        this.quotas = quotas;
         this.backpressureObserver = backpressureObserver;
     }
 
@@ -67,9 +68,13 @@ public class OutboxTaskDispatchLoop implements ApplicationRunner {
     ) {
         this(
                 queue, properties, clock, inProcessDispatchEnabled,
-                (key, policy, requested, now) -> new TokenBucketDecision(requested, Duration.ZERO),
-                new AdmissionBackpressureObserver() { },
-                1_000, 1_000, Duration.ofSeconds(1)
+                (tenantId, key, policy, requested, now) -> new TokenBucketDecision(requested, Duration.ZERO),
+                tenantId -> TenantQuota.inherited(tenantId, new TenantQuotaPolicy(
+                        1_000_000, 1_000_000, 1_000_000, 1_000_000,
+                        new TokenBucketPolicy(1_000, 1_000, Duration.ofSeconds(1)),
+                        new TokenBucketPolicy(1_000, 1_000, Duration.ofSeconds(1))
+                )),
+                new AdmissionBackpressureObserver() { }
         );
     }
 
@@ -83,21 +88,28 @@ public class OutboxTaskDispatchLoop implements ApplicationRunner {
         if (!dispatching.compareAndSet(false, true)) return;
         try {
             var now = clock.instant();
-            ReadyQueueSnapshot snapshot = queue.readyQueue(now, properties.batchSize());
-            if (snapshot == null) snapshot = ReadyQueueSnapshot.unknown(properties.batchSize());
-            backpressureObserver.readyQueueObserved(snapshot.depth(), snapshot.oldestAge());
-            int requested = (int) Math.min(properties.batchSize(), snapshot.depth());
-            if (requested == 0) return;
-            TokenBucketDecision decision = rateLimiter.consume(
-                    "task-dispatch", rateLimitPolicy, requested, now
-            );
-            if (decision.throttled(requested)) {
-                backpressureObserver.taskDispatchThrottled(
-                        requested, decision.granted(), decision.retryAfter()
+            int enqueued = 0;
+            for (var tenantId : queue.readyTenants(now, properties.batchSize())) {
+                int remaining = properties.batchSize() - enqueued;
+                if (remaining == 0) break;
+                ReadyQueueSnapshot snapshot = queue.readyQueue(tenantId, now, remaining);
+                if (snapshot == null) snapshot = ReadyQueueSnapshot.unknown(remaining);
+                backpressureObserver.readyQueueObserved(snapshot.depth(), snapshot.oldestAge());
+                int requested = (int) Math.min(remaining, snapshot.depth());
+                if (requested == 0) continue;
+                TokenBucketDecision decision = rateLimiter.consume(
+                        tenantId, "task-dispatch",
+                        quotas.quotaFor(tenantId).policy().dispatchRateLimit(), requested, now
                 );
+                if (decision.throttled(requested)) {
+                    backpressureObserver.taskDispatchThrottled(
+                            requested, decision.granted(), decision.retryAfter()
+                    );
+                }
+                if (decision.granted() > 0) {
+                    enqueued += queue.enqueueReadyTasks(tenantId, decision.granted(), now);
+                }
             }
-            if (decision.granted() == 0) return;
-            int enqueued = queue.enqueueReadyTasks(decision.granted(), now);
             if (enqueued > 0) LOGGER.debug("Enqueued {} task commands", enqueued);
         } catch (RuntimeException failure) {
             LOGGER.error("Outbox task dispatch failed", failure);

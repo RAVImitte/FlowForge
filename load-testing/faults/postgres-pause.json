@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "name": "postgres-pause",
+  "actions": [
+    {
+      "service": "postgres",
+      "operation": "pause",
+      "delaySeconds": 5,
+      "durationSeconds": 5
+    }
+  ],
+  "thresholds": {
+    "maximumRecoverySeconds": 45,
+    "maximumSuppressedCommandDuplicates": 0,
+    "maximumDurableFailures": 0
+  }
+}

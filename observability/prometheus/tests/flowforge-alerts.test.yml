@@ -1,0 +1,51 @@
+rule_files:
+  - ../rules/flowforge-alerts.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: api availability fast burn pages after both windows remain high
+    interval: 30s
+    input_series:
+      - series: 'flowforge:sli_api_error:ratio_rate1h{environment="production"}'
+        values: '0.02+0x10'
+      - series: 'flowforge:sli_api_error:ratio_rate5m{environment="production"}'
+        values: '0.02+0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: FlowForgeApiAvailabilityFastBurn
+        exp_alerts:
+          - exp_labels:
+              environment: production
+              severity: page
+              service: flowforge-control-plane
+              slo: api-availability
+            exp_annotations:
+              summary: FlowForge API availability is consuming error budget rapidly
+              description: Environment production is burning the 99.9% API availability budget at a paging rate.
+              action: Check control-plane errors and dependency health, then stop unsafe traffic if the burn continues.
+              runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
+
+  - name: stalled control-plane outbox pages only after persistence threshold
+    interval: 30s
+    input_series:
+      - series: 'flowforge_outbox_pending{environment="production"}'
+        values: '3+0x20'
+      - series: 'flowforge_outbox_oldest_age_seconds{environment="production"}'
+        values: '120+0x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FlowForgeControlPlaneOutboxStalled
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: FlowForgeControlPlaneOutboxStalled
+        exp_alerts:
+          - exp_labels:
+              environment: production
+              severity: page
+              service: flowforge-control-plane
+            exp_annotations:
+              summary: Control-plane events are stalled in the transactional outbox
+              description: Pending control-plane messages in production are older than 60 seconds.
+              action: Check Kafka availability and outbox publisher errors; preserve rows and allow idempotent replay.
+              runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
