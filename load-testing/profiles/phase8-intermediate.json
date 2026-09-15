@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "phase8-intermediate",
+  "mode": "API",
+  "baseUrl": "http://localhost:8080",
+  "operations": 1000,
+  "arrivalRatePerSecond": 5,
+  "maxInFlight": 250,
+  "fanOut": 8,
+  "taskDelayMs": 25,
+  "pollIntervalMs": 250,
+  "operationTimeoutSeconds": 180,
+  "scheduleLeadSeconds": 2,
+  "thresholds": {
+    "minimumAcceptanceRatio": 1.0,
+    "minimumSuccessRatio": 1.0,
+    "maximumErrorRatio": 0.0,
+    "maximumStartP95Ms": 500,
+    "maximumCompletionP95Ms": 10000
+  }
+}

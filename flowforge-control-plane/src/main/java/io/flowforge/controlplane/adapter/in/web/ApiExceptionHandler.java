@@ -127,6 +127,25 @@ public class ApiExceptionHandler {
                 .body(detail);
     }
 
+    @ExceptionHandler(WorkflowStartOverloadedException.class)
+    ResponseEntity<ProblemDetail> workflowStartOverloaded(
+            WorkflowStartOverloadedException exception,
+            HttpServletRequest request
+    ) {
+        ProblemDetail detail = detail(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "CONTROL_PLANE_ADMISSION_SATURATED",
+                exception.getMessage(),
+                request
+        );
+        long retryAfterSeconds = Math.max(1, (exception.retryAfter().toMillis() + 999) / 1_000);
+        detail.setProperty("limit", exception.limit());
+        detail.setProperty("retryAfterSeconds", retryAfterSeconds);
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", Long.toString(retryAfterSeconds))
+                .body(detail);
+    }
+
     @ExceptionHandler(ScheduleNotFoundException.class)
     ResponseEntity<ProblemDetail> scheduleNotFound(
             ScheduleNotFoundException exception,

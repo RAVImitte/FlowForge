@@ -51,7 +51,8 @@ public class TaskHeartbeatConsumer {
 
     @KafkaListener(
             topics = FlowForgeTopics.TASK_HEARTBEATS_V1,
-            groupId = "${flowforge.leases.heartbeat-consumer-group:flowforge-control-plane-heartbeats-v1}"
+            groupId = "${flowforge.leases.heartbeat-consumer-group:flowforge-control-plane-heartbeats-v1}",
+            concurrency = "${flowforge.leases.heartbeat-consumer-concurrency:2}"
     )
     public void consume(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         try (LogContext recordContext = recordContext(record)) {

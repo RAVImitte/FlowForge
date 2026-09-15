@@ -62,6 +62,7 @@ class FlowForgeLoadGeneratorTest {
         assertThat(report.counts().unexpectedResponses()).isZero();
         assertThat(report.rates().acceptanceRatio()).isEqualTo(1.0);
         assertThat(report.httpStatuses()).containsEntry("202", 4L).containsEntry("200", 4L);
+        assertThat(report.admissionHttpStatuses()).containsExactlyEntriesOf(java.util.Map.of("202", 4L));
         assertThat(workflowRequest.get().path("tasks").size()).isEqualTo(5);
         assertThat(workflowRequest.get().path("dependencies").size()).isEqualTo(6);
         assertThat(workflowRequest.get().toString()).contains("START", "FAN_001", "JOIN", "durationMs");
@@ -94,6 +95,7 @@ class FlowForgeLoadGeneratorTest {
         assertThat(report.counts().attempted()).isEqualTo(3);
         assertThat(report.counts().accepted()).isZero();
         assertThat(report.counts().unexpectedResponses()).isEqualTo(3);
+        assertThat(report.counts().unexpectedServerErrors()).isEqualTo(3);
         assertThat(report.counts().transportErrors()).isZero();
         assertThat(report.httpStatuses()).containsEntry("500", 3L);
         assertThat(report.counts().attempted()).isEqualTo(
@@ -131,7 +133,7 @@ class FlowForgeLoadGeneratorTest {
 
         LoadTestReport report = new FlowForgeLoadGenerator().run(profile(1, server.getAddress().getPort()));
 
-        assertThat(report.schemaVersion()).isEqualTo(2);
+        assertThat(report.schemaVersion()).isEqualTo(3);
         assertThat(report.counts().succeeded()).isEqualTo(1);
         assertThat(report.counts().transportErrors()).isZero();
         assertThat(report.counts().pollTransportErrors()).isEqualTo(1);

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "name": "workers-4-c3-12p",
+  "kafkaPartitions": 12,
+  "controlPlane": {
+    "ports": [8080],
+    "databasePoolSize": 24,
+    "maxHeapMb": 768
+  },
+  "worker": {
+    "ports": [8081, 8083, 8084, 8085],
+    "databasePoolSize": 8,
+    "concurrency": 3,
+    "maxHeapMb": 384
+  },
+  "probeIntervalSeconds": 5,
+  "startupTimeoutSeconds": 120,
+  "postRunDrainSeconds": 10
+}

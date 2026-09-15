@@ -105,9 +105,13 @@ management:
 info:
   app:
     name: FlowForge
-    phase: 7
+    phase: 8
 
 flowforge:
+  admission:
+    workflow-start:
+      max-in-flight: ${FLOWFORGE_WORKFLOW_START_MAX_IN_FLIGHT:8}
+      retry-after: ${FLOWFORGE_WORKFLOW_START_RETRY_AFTER:1s}
   dlq-replay:
     transport-timeout: ${FLOWFORGE_DLQ_REPLAY_TRANSPORT_TIMEOUT:10s}
     claim-lease: ${FLOWFORGE_DLQ_REPLAY_CLAIM_LEASE:30s}
@@ -148,7 +152,9 @@ flowforge:
   results:
     consumer-enabled: ${FLOWFORGE_RESULT_CONSUMER_ENABLED:false}
     consumer-group: ${FLOWFORGE_RESULT_CONSUMER_GROUP:flowforge-control-plane-results-v1}
+    consumer-concurrency: ${FLOWFORGE_RESULT_CONSUMER_CONCURRENCY:3}
     enqueue-batch-size: ${FLOWFORGE_RESULT_ENQUEUE_BATCH_SIZE:1000}
+    inline-dispatch-enabled: ${FLOWFORGE_RESULT_INLINE_DISPATCH_ENABLED:false}
   retries:
     scheduler-enabled: ${FLOWFORGE_RETRY_SCHEDULER_ENABLED:true}
     batch-size: ${FLOWFORGE_RETRY_BATCH_SIZE:100}
@@ -161,6 +167,7 @@ flowforge:
     duration: ${FLOWFORGE_WORKER_LEASE_DURATION:30s}
     heartbeat-consumer-enabled: ${FLOWFORGE_HEARTBEAT_CONSUMER_ENABLED:false}
     heartbeat-consumer-group: ${FLOWFORGE_HEARTBEAT_CONSUMER_GROUP:flowforge-control-plane-heartbeats-v1}
+    heartbeat-consumer-concurrency: ${FLOWFORGE_HEARTBEAT_CONSUMER_CONCURRENCY:2}
     reaper-enabled: ${FLOWFORGE_LEASE_REAPER_ENABLED:false}
     batch-size: ${FLOWFORGE_LEASE_REAPER_BATCH_SIZE:100}
     poll-interval-ms: ${FLOWFORGE_LEASE_REAPER_POLL_INTERVAL_MS:250}

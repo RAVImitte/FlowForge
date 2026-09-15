@@ -67,15 +67,16 @@ public class OutboxPublisher {
                                 message -> () -> publish(message)
                         ).toList()
                 );
-                int published = 0;
-                for (Future<Boolean> publication : publications) {
+                List<OutboxMessage> acknowledged = new java.util.ArrayList<>();
+                for (int index = 0; index < publications.size(); index++) {
+                    Future<Boolean> publication = publications.get(index);
                     try {
-                        if (publication.get()) published++;
+                        if (publication.get()) acknowledged.add(messages.get(index));
                     } catch (ExecutionException failure) {
                         LOGGER.error("Unexpected outbox publication failure", failure.getCause());
                     }
                 }
-                return published;
+                return persistAcknowledgements(acknowledged);
             } catch (InterruptedException interrupted) {
                 Thread.currentThread().interrupt();
                 return 0;
@@ -95,11 +96,11 @@ public class OutboxPublisher {
                 LogFields.TASK_EXECUTION_ID, message.taskExecutionId(),
                 LogFields.KAFKA_TOPIC, message.topic()
         )) {
-            return publishWithContext(message);
+            return sendWithContext(message);
         }
     }
 
-    private boolean publishWithContext(OutboxMessage message) {
+    private boolean sendWithContext(OutboxMessage message) {
         try {
             sender.send(message, properties.publishTimeout());
         } catch (Exception failure) {
@@ -120,20 +121,33 @@ public class OutboxPublisher {
             return false;
         }
 
+        return true;
+    }
+
+    private int persistAcknowledgements(List<OutboxMessage> messages) {
+        if (messages.isEmpty()) return 0;
         try {
-            if (!repository.markPublished(message.id(), message.claimToken(), clock.instant())) {
-                LOGGER.warn("Outbox acknowledgement was stale for message {}", message.id());
-                meters.counter("flowforge.outbox.stale.acknowledgements").increment();
-                return false;
+            int[] updates = repository.markPublishedBatch(messages, clock.instant());
+            int published = 0;
+            for (int index = 0; index < updates.length; index++) {
+                OutboxMessage message = messages.get(index);
+                if (updates[index] == 1) {
+                    published++;
+                    meters.counter("flowforge.outbox.published", "topic", message.topic()).increment();
+                } else {
+                    LOGGER.warn("Outbox acknowledgement was stale for message {}", message.id());
+                    meters.counter("flowforge.outbox.stale.acknowledgements").increment();
+                }
             }
-            meters.counter("flowforge.outbox.published", "topic", message.topic()).increment();
-            return true;
+            return published;
         } catch (RuntimeException failure) {
-            // Kafka may already have the record. Keep the lease so recovery deliberately
-            // replays the same stable event ID after expiry instead of losing the message.
-            meters.counter("flowforge.outbox.acknowledgement.failures", "topic", message.topic()).increment();
-            LOGGER.error("Kafka acknowledged outbox message {} but the database update failed", message.id(), failure);
-            return false;
+            // Kafka may already contain every record. The transaction rolls back and leases remain
+            // in-flight so recovery replays the same stable event IDs after expiry.
+            messages.forEach(message -> meters.counter(
+                    "flowforge.outbox.acknowledgement.failures", "topic", message.topic()).increment());
+            LOGGER.error("Kafka acknowledged {} outbox messages but the acknowledgement batch failed",
+                    messages.size(), failure);
+            return 0;
         }
     }
 

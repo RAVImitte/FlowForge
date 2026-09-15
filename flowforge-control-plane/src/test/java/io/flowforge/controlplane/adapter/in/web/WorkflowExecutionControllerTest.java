@@ -13,6 +13,7 @@ import io.flowforge.domain.execution.WorkflowRun;
 import io.flowforge.domain.execution.WorkflowRunStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import tools.jackson.databind.json.JsonMapper;
@@ -42,6 +43,7 @@ class WorkflowExecutionControllerTest {
 
     private ExecutionRepository repository;
     private MockMvc mvc;
+    private WorkflowStartAdmissionGate admissionGate;
 
     @BeforeEach
     void setUp() {
@@ -56,7 +58,8 @@ class WorkflowExecutionControllerTest {
         when(repository.claimReadyTasks(any(TenantId.class), anyInt(), any())).thenReturn(List.of());
         FlowForgeSecurityProperties properties = new FlowForgeSecurityProperties();
         properties.setEnabled(false);
-        mvc = MockMvcBuilders.standaloneSetup(new WorkflowExecutionController(service))
+        admissionGate = new WorkflowStartAdmissionGate(new SimpleMeterRegistry(), 8, Duration.ofSeconds(1));
+        mvc = MockMvcBuilders.standaloneSetup(new WorkflowExecutionController(service, admissionGate))
                 .setControllerAdvice(new ApiExceptionHandler())
                 .addFilters(new TenantContextFilter(properties, JsonMapper.builder().build()))
                 .build();
@@ -109,6 +112,29 @@ class WorkflowExecutionControllerTest {
                 .andExpect(header().string("Retry-After", "2"))
                 .andExpect(jsonPath("$.code").value("WORKFLOW_READY_QUEUE_SATURATED"))
                 .andExpect(jsonPath("$.retryAfterSeconds").value(2));
+    }
+
+    @Test
+    void shedsWorkflowStartsBeforeCallingTheDatabaseWhenTheLocalBulkheadIsFull() throws Exception {
+        try (WorkflowStartAdmissionGate.Lease ignored = admissionGate.acquire()) {
+            WorkflowStartAdmissionGate.Lease[] remaining = new WorkflowStartAdmissionGate.Lease[7];
+            try {
+                for (int index = 0; index < remaining.length; index++) {
+                    remaining[index] = admissionGate.acquire();
+                }
+
+                mvc.perform(post("/api/v1/workflows/{workflowId}/executions", WORKFLOW_ID)
+                                .header("Idempotency-Key", "overloaded-order"))
+                        .andExpect(status().isTooManyRequests())
+                        .andExpect(header().string("Retry-After", "1"))
+                        .andExpect(jsonPath("$.code").value("CONTROL_PLANE_ADMISSION_SATURATED"))
+                        .andExpect(jsonPath("$.limit").value(8));
+            } finally {
+                for (WorkflowStartAdmissionGate.Lease lease : remaining) {
+                    if (lease != null) lease.close();
+                }
+            }
+        }
     }
 
     @Test

@@ -28,7 +28,7 @@ class TopologyAssetsTest {
         assertThat(files).extracting(path -> stripExtension(path.getFileName().toString()))
                 .containsExactly(
                         "balanced-2x2-6p", "single-6p", "single-pool2-6p",
-                        "workers-2-6p", "workers-2-c4-6p"
+                        "workers-2-6p", "workers-2-c4-6p", "workers-4-c3-12p"
                 );
 
         for (Path file : files) {

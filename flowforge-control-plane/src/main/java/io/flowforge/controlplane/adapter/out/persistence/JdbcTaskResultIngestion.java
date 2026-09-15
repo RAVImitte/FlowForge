@@ -9,7 +9,6 @@ import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionConflictException;
 import io.flowforge.application.execution.ExecutionRepository;
 import io.flowforge.application.execution.InboundTaskResult;
-import io.flowforge.application.execution.TaskCompletionResult;
 import io.flowforge.application.execution.TaskResultIngestion;
 import io.flowforge.application.execution.TaskResultIngestionOutcome;
 import io.flowforge.application.execution.ReadyQueueSnapshot;
@@ -108,11 +107,11 @@ public class JdbcTaskResultIngestion implements TaskResultIngestion {
             return TaskResultIngestionOutcome.DUPLICATE;
         }
 
-        TaskCompletionResult completion = executions.completeTask(result.toCompletion(), receivedAt);
-        if (completion.applied()) {
+        boolean applied = executions.applyTaskCompletion(result.toCompletion(), receivedAt);
+        if (applied && properties.inlineDispatchEnabled()) {
             enqueueWithinRateLimit(result, receivedAt);
         }
-        TaskResultIngestionOutcome outcome = completion.applied()
+        TaskResultIngestionOutcome outcome = applied
                 ? TaskResultIngestionOutcome.APPLIED
                 : TaskResultIngestionOutcome.REDUNDANT;
         int updated = jdbc.sql("""

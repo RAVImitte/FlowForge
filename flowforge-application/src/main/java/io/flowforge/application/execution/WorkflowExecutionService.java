@@ -6,8 +6,11 @@ import io.flowforge.application.coordination.TokenBucketRateLimiter;
 import io.flowforge.application.tenancy.TenantQuota;
 import io.flowforge.application.tenancy.TenantQuotaPolicy;
 import io.flowforge.application.tenancy.TenantQuotaProvider;
+import io.flowforge.application.workflow.PageResult;
 import io.flowforge.domain.tenancy.TenantId;
 import io.flowforge.domain.execution.WorkflowExecution;
+import io.flowforge.domain.execution.WorkflowRunStatus;
+
 
 import java.time.Clock;
 import java.time.Duration;
@@ -111,7 +114,8 @@ public final class WorkflowExecutionService {
         Objects.requireNonNull(workflowId, "workflowId must not be null");
         String normalizedKey = normalizeIdempotencyKey(idempotencyKey);
         WorkflowExecution execution = repository.start(tenantId, workflowId, normalizedKey, clock.instant());
-        if (dispatchOnStart) dispatchReadyTasks(tenantId, DEFAULT_DISPATCH_BATCH);
+        if (!dispatchOnStart) return execution;
+        dispatchReadyTasks(tenantId, DEFAULT_DISPATCH_BATCH);
         return repository.findById(tenantId, execution.workflow().id()).orElse(execution);
     }
 
@@ -125,6 +129,14 @@ public final class WorkflowExecutionService {
         Objects.requireNonNull(executionId, "executionId must not be null");
         return repository.cancel(tenantId, executionId, clock.instant());
     }
+
+    public PageResult<ExecutionSummary> list(TenantId tenantId, int page, int size, WorkflowRunStatus statusFilter) {
+        Objects.requireNonNull(tenantId, "tenantId must not be null");
+        if (page < 0) throw new IllegalArgumentException("page must be at least 0");
+        if (size < 1 || size > 100) throw new IllegalArgumentException("size must be between 1 and 100");
+        return repository.list(tenantId, page, size, statusFilter);
+    }
+
 
     public int dispatchReadyTasks(int limit) {
         if (limit < 1 || limit > 1_000) {

@@ -53,6 +53,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "flowforge.outbox.publisher-enabled=false",
         "flowforge.outbox.command-dispatch-enabled=false",
         "flowforge.results.consumer-enabled=true",
+        "flowforge.results.inline-dispatch-enabled=true",
         "flowforge.leases.heartbeat-consumer-enabled=true",
         "flowforge.retries.scheduler-enabled=false",
         "flowforge.timeouts.reaper-enabled=false",

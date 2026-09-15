@@ -18,6 +18,7 @@ public record LoadTestReport(
         Rates rates,
         Latencies latencyMs,
         Map<String, Long> httpStatuses,
+        Map<String, Long> admissionHttpStatuses,
         List<ThresholdResult> thresholds,
         boolean passed
 ) {
@@ -42,6 +43,7 @@ public record LoadTestReport(
             long terminalFailed,
             long rejected,
             long unexpectedResponses,
+            long unexpectedServerErrors,
             long timedOut,
             long transportErrors,
             long pollTransportErrors

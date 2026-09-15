@@ -52,7 +52,8 @@ public class TaskResultConsumer {
 
     @KafkaListener(
             topics = FlowForgeTopics.TASK_RESULTS_V1,
-            groupId = "${flowforge.results.consumer-group:flowforge-control-plane-results-v1}"
+            groupId = "${flowforge.results.consumer-group:flowforge-control-plane-results-v1}",
+            concurrency = "${flowforge.results.consumer-concurrency:3}"
     )
     public void consume(ConsumerRecord<String, String> record, Acknowledgment acknowledgment) {
         try (LogContext recordContext = recordContext(record)) {

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "name": "phase8-10k-x10",
+  "mode": "API",
+  "baseUrl": "http://localhost:8080",
+  "operations": 10000,
+  "arrivalRatePerSecond": 5.7,
+  "maxInFlight": 250,
+  "fanOut": 10,
+  "taskDelayMs": 25,
+  "pollIntervalMs": 500,
+  "operationTimeoutSeconds": 300,
+  "scheduleLeadSeconds": 2,
+  "thresholds": {
+    "minimumAcceptanceRatio": 1.0,
+    "minimumSuccessRatio": 1.0,
+    "maximumErrorRatio": 0.0,
+    "maximumStartP95Ms": 150,
+    "maximumCompletionP95Ms": 5000
+  }
+}

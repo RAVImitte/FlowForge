@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlowForge — Create Workflow</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/dist/vis-network.min.css" rel="stylesheet">
+    <link href="/css/style.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/">
+                <i class="bi bi-gear-wide-connected brand-icon"></i> FlowForge
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="nav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item"><a class="nav-link" href="/">Workflows</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/executions/index.html">Executions</a></li>
+                    <li class="nav-item"><a class="nav-link active" href="/workflow/create.html">New Workflow</a></li>
+
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mb-5">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3><i class="bi bi-diagram-3"></i> Create Workflow</h3>
+            <a href="/" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left"></i> Back
+            </a>
+        </div>
+
+        <div class="row">
+            <!-- Left: Form -->
+            <div class="col-lg-7">
+                <div class="card mb-3">
+                    <div class="card-header"><i class="bi bi-info-circle"></i> Workflow Details</div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label class="form-label" for="wf-name">Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="wf-name" placeholder="e.g. Order processing" maxlength="200">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="wf-desc">Description</label>
+                            <textarea class="form-control" id="wf-desc" rows="2" placeholder="e.g. Validate, charge, and notify" maxlength="2000"></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="wf-max-exec">Max Concurrent Executions</label>
+                            <input type="number" class="form-control" id="wf-max-exec" min="1" placeholder="Leave empty for default">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-list-check"></i> Tasks</span>
+                        <button class="btn btn-primary btn-sm" onclick="addTask()">
+                            <i class="bi bi-plus-lg"></i> Add Task
+                        </button>
+                    </div>
+                    <div class="card-body" id="tasks-container">
+                        <p class="text-muted small" id="no-tasks-msg">No tasks yet. Click "Add Task" to begin.</p>
+                    </div>
+                </div>
+
+                <div class="card mb-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-diagram-2"></i> Dependencies</span>
+                        <button class="btn btn-primary btn-sm" onclick="addDependency()">
+                            <i class="bi bi-plus-lg"></i> Add Dependency
+                        </button>
+                    </div>
+                    <div class="card-body" id="deps-container">
+                        <p class="text-muted small" id="no-deps-msg">No dependencies. Add tasks first, then define ordering.</p>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary" onclick="submitWorkflow()">
+                        <i class="bi bi-check-lg"></i> Create Workflow
+                    </button>
+                    <a href="/" class="btn btn-outline-secondary">Cancel</a>
+                </div>
+            </div>
+
+            <!-- Right: DAG Preview -->
+            <div class="col-lg-5">
+                <div class="card">
+                    <div class="card-header"><i class="bi bi-share"></i> DAG Preview</div>
+                    <div class="card-body p-0">
+                        <div id="dag-container"></div>
+                    </div>
+                    <div class="card-footer">
+                        <small class="text-muted">Tasks are shown as nodes; dependencies as arrows. The graph must be acyclic.</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vis-network@9.1.9/dist/vis-network.min.js"></script>
+    <script src="/js/api.js"></script>
+    <script src="/js/utils.js"></script>
+    <script>
+        let tasks = [];
+        let dependencies = [];
+        let dagNetwork = null;
+
+        /* ---- Task management ---- */
+
+        function addTask() {
+            const task = {
+                key: '',
+                name: '',
+                type: 'NOOP',
+                configuration: {},
+            };
+            tasks.push(task);
+            renderTasks();
+            renderDependencies();
+            refreshDag();
+        }
+
+        function removeTask(index) {
+            const removedKey = tasks[index].key;
+            tasks.splice(index, 1);
+            // Remove dependencies referencing this task
+            dependencies = dependencies.filter(d => d.taskKey !== removedKey && d.dependsOnTaskKey !== removedKey);
+            renderTasks();
+            renderDependencies();
+            refreshDag();
+        }
+
+        function updateTask(index, field, value) {
+            const oldKey = tasks[index].key;
+            tasks[index][field] = value;
+            // If key changed, update dependencies
+            if (field === 'key' && oldKey && oldKey !== value) {
+                dependencies.forEach(d => {
+                    if (d.taskKey === oldKey) d.taskKey = value;
+                    if (d.dependsOnTaskKey === oldKey) d.dependsOnTaskKey = value;
+                });
+            }
+            renderDependencies();
+            refreshDag();
+        }
+
+        function renderTasks() {
+            const container = document.getElementById('tasks-container');
+            const noMsg = document.getElementById('no-tasks-msg');
+
+            if (tasks.length === 0) {
+                container.innerHTML = '<p class="text-muted small" id="no-tasks-msg">No tasks yet. Click "Add Task" to begin.</p>';
+                return;
+            }
+
+            container.innerHTML = tasks.map((t, i) => `
+                <div class="task-card">
+                    <div class="task-number">${i + 1}</div>
+                    <div class="d-flex justify-content-between mb-2">
+                        <strong class="text-muted small">Task ${i + 1}</strong>
+                        <button class="btn btn-outline-danger btn-sm" onclick="removeTask(${i})">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </div>
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label class="form-label">Key</label>
+                            <input type="text" class="form-control form-control-sm" placeholder="VALIDATE_ORDER"
+                                pattern="[A-Z][A-Z0-9_]{0,99}" maxlength="100"
+                                value="${FlowForgeUI.escapeHtml(t.key)}"
+                                oninput="updateTask(${i}, 'key', this.value)">
+                        </div>
+                        <div class="col-md-5">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-control form-control-sm" placeholder="Validate order"
+                                maxlength="200"
+                                value="${FlowForgeUI.escapeHtml(t.name)}"
+                                oninput="updateTask(${i}, 'name', this.value)">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Type</label>
+                            <select class="form-select form-select-sm" onchange="updateTask(${i}, 'type', this.value)">
+                                <option value="NOOP" ${t.type === 'NOOP' ? 'selected' : ''}>NOOP</option>
+                                <option value="DELAY" ${t.type === 'DELAY' ? 'selected' : ''}>DELAY</option>
+                                <option value="FAIL" ${t.type === 'FAIL' ? 'selected' : ''}>FAIL</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <label class="form-label">Configuration (JSON)</label>
+                        <textarea class="form-control form-control-sm json-config" rows="2"
+                            placeholder='{"durationMs": 100}'
+                            oninput="updateTaskConfig(${i}, this.value)">${FlowForgeUI.escapeHtml(JSON.stringify(t.configuration, null, 2))}</textarea>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateTaskConfig(index, value) {
+            try {
+                tasks[index].configuration = value.trim() ? JSON.parse(value) : {};
+            } catch (_) {
+                /* allow editing in-progress JSON */
+            }
+        }
+
+        /* ---- Dependency management ---- */
+
+        function addDependency() {
+            if (tasks.length < 2) {
+                FlowForgeUI.toast('Add at least 2 tasks before defining dependencies', 'warning');
+                return;
+            }
+            dependencies.push({ taskKey: '', dependsOnTaskKey: '' });
+            renderDependencies();
+            refreshDag();
+        }
+
+        function removeDependency(index) {
+            dependencies.splice(index, 1);
+            renderDependencies();
+            refreshDag();
+        }
+
+        function updateDependency(index, field, value) {
+            dependencies[index][field] = value;
+            refreshDag();
+        }
+
+        function renderDependencies() {
+            const container = document.getElementById('deps-container');
+            if (tasks.length < 2) {
+                container.innerHTML = '<p class="text-muted small" id="no-deps-msg">No dependencies. Add at least 2 tasks first.</p>';
+                return;
+            }
+            if (dependencies.length === 0) {
+                container.innerHTML = '<p class="text-muted small" id="no-deps-msg">No dependencies. Click "Add Dependency" to define task ordering.</p>';
+                return;
+            }
+
+            const taskOptions = tasks.filter(t => t.key).map(t =>
+                `<option value="${FlowForgeUI.escapeHtml(t.key)}">${FlowForgeUI.escapeHtml(t.key)}</option>`
+            ).join('');
+
+            container.innerHTML = dependencies.map((d, i) => `
+                <div class="dependency-row">
+                    <select class="form-select form-select-sm" onchange="updateDependency(${i}, 'taskKey', this.value)">
+                        <option value="">Task (dependent)</option>
+                        ${taskOptions}
+                    </select>
+                    <span class="text-muted">depends on</span>
+                    <select class="form-select form-select-sm" onchange="updateDependency(${i}, 'dependsOnTaskKey', this.value)">
+                        <option value="">Prerequisite</option>
+                        ${taskOptions}
+                    </select>
+                    <button class="btn btn-outline-danger btn-sm" onclick="removeDependency(${i})">
+                        <i class="bi bi-x"></i>
+                    </button>
+                </div>
+            `).join('');
+
+            // Restore selected values
+            dependencies.forEach((d, i) => {
+                const selects = container.querySelectorAll('.dependency-row select');
+                if (selects[0]) selects[0].value = d.taskKey;
+                if (selects[1]) selects[1].value = d.dependsOnTaskKey;
+            });
+        }
+
+        /* ---- DAG Visualization ---- */
+
+        function refreshDag() {
+            const validTasks = tasks.filter(t => t.key);
+            const nodes = validTasks.map(t => ({
+                id: t.key,
+                label: t.key + (t.type ? `\n(${t.type})` : ''),
+                shape: 'box',
+                color: { background: '#e0e7ff', border: '#4f46e5' },
+                font: { size: 13 },
+            }));
+
+            const edges = dependencies
+                .filter(d => d.taskKey && d.dependsOnTaskKey)
+                .map(d => ({
+                    from: d.dependsOnTaskKey,
+                    to: d.taskKey,
+                    arrows: 'to',
+                    color: { color: '#6b7280' },
+                }));
+
+            if (dagNetwork) {
+                dagNetwork.setData({ nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) });
+            } else if (validTasks.length > 0) {
+                dagNetwork = new vis.Network(
+                    document.getElementById('dag-container'),
+                    { nodes: new vis.DataSet(nodes), edges: new vis.DataSet(edges) },
+                    {
+                        layout: { hierarchical: { direction: 'UD', sortMethod: 'directed' } },
+                        physics: { enabled: false },
+                        interaction: { dragNodes: true, zoomView: true },
+                    }
+                );
+            }
+        }
+
+        /* ---- Submit ---- */
+
+        async function submitWorkflow() {
+            const name = document.getElementById('wf-name').value.trim();
+            if (!name) {
+                FlowForgeUI.toast('Workflow name is required', 'warning');
+                return;
+            }
+            if (tasks.length === 0) {
+                FlowForgeUI.toast('At least one task is required', 'warning');
+                return;
+            }
+            for (const t of tasks) {
+                if (!t.key || !t.name) {
+                    FlowForgeUI.toast('All tasks must have a key and name', 'warning');
+                    return;
+                }
+            }
+
+            const payload = {
+                name,
+                description: document.getElementById('wf-desc').value.trim() || null,
+                tasks: tasks.map(t => ({
+                    key: t.key,
+                    name: t.name,
+                    type: t.type,
+                    configuration: t.configuration || {},
+                })),
+                dependencies: dependencies.filter(d => d.taskKey && d.dependsOnTaskKey),
+            };
+
+            const maxExec = document.getElementById('wf-max-exec').value;
+            if (maxExec) payload.maxConcurrentExecutions = parseInt(maxExec, 10);
+
+            FlowForgeUI.showLoading();
+            try {
+                const result = await FlowForgeAPI.createWorkflow(payload);
+                FlowForgeUI.toast('Workflow created successfully', 'success');
+                window.location.href = `/workflow/detail.html?id=${result.data.id}`;
+            } catch (err) {
+                FlowForgeUI.toast(err.message, 'danger');
+            } finally {
+                FlowForgeUI.hideLoading();
+            }
+        }
+
+        // Add one default task on load
+        addTask();
+    </script>
+</body>
+</html>

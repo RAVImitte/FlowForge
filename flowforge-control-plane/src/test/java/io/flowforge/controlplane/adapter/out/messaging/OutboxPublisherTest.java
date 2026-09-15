@@ -16,6 +16,8 @@ import java.util.concurrent.TimeoutException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -39,7 +41,7 @@ class OutboxPublisherTest {
                 .thenReturn(List.of(message));
         when(repository.release(any(UUID.class), any(UUID.class), any(Instant.class), any(String.class)))
                 .thenReturn(true);
-        when(repository.markPublished(message.id(), message.claimToken(), NOW)).thenReturn(true);
+        when(repository.markPublishedBatch(anyList(), eq(NOW))).thenReturn(new int[]{1});
         doThrow(new IllegalStateException("broker unavailable"))
                 .doNothing()
                 .when(sender).send(message, Duration.ofSeconds(5));
@@ -49,7 +51,7 @@ class OutboxPublisherTest {
         assertThat(publisher.publishAvailable()).isEqualTo(1);
 
         verify(repository).release(message.id(), message.claimToken(), NOW, "broker unavailable");
-        verify(repository).markPublished(message.id(), message.claimToken(), NOW);
+        verify(repository).markPublishedBatch(List.of(message), NOW);
         assertThat(meters.counter("flowforge.outbox.publish.failures", "topic", message.topic()).count())
                 .isEqualTo(1);
         assertThat(meters.counter("flowforge.outbox.published", "topic", message.topic()).count())
@@ -64,9 +66,9 @@ class OutboxPublisherTest {
         when(repository.claimBatch(anyInt(), any(String.class), any(Instant.class), any(Duration.class)))
                 .thenReturn(List.of(message))
                 .thenReturn(List.of(message));
-        when(repository.markPublished(message.id(), message.claimToken(), NOW))
+        when(repository.markPublishedBatch(anyList(), eq(NOW)))
                 .thenThrow(new IllegalStateException("database unavailable"))
-                .thenReturn(true);
+                .thenReturn(new int[]{1});
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         OutboxPublisher publisher = publisher(repository, sender, meters);
 
@@ -74,7 +76,7 @@ class OutboxPublisherTest {
         assertThat(publisher.publishAvailable()).isEqualTo(1);
 
         verify(sender, times(2)).send(message, Duration.ofSeconds(5));
-        verify(repository, times(2)).markPublished(message.id(), message.claimToken(), NOW);
+        verify(repository, times(2)).markPublishedBatch(List.of(message), NOW);
         verify(repository, never()).release(
                 any(UUID.class), any(UUID.class), any(Instant.class), any(String.class)
         );

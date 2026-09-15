@@ -187,11 +187,20 @@ function Start-FlowForgeProcess {
         $env:FLOWFORGE_DB_POOL_SIZE = [string]$PoolSize
         $env:FLOWFORGE_INSTANCE_ID = $instance
         $env:FLOWFORGE_SCHEDULER_INSTANCE_ID = $instance
+        $env:FLOWFORGE_RESULT_CONSUMER_CONCURRENCY = [string]$topologyConfig.kafkaPartitions
+        $env:FLOWFORGE_RESULT_INLINE_DISPATCH_ENABLED = "false"
+        $env:FLOWFORGE_HEARTBEAT_CONSUMER_CONCURRENCY = [string][Math]::Min(2, [int]$topologyConfig.kafkaPartitions)
+        $env:FLOWFORGE_OUTBOX_BATCH_SIZE = "500"
+        $env:FLOWFORGE_OUTBOX_PUBLISH_CONCURRENCY = [string][Math]::Min(8, [int]$PoolSize)
+        $env:FLOWFORGE_OUTBOX_POLL_INTERVAL_MS = "25"
+        $env:FLOWFORGE_OUTBOX_COMMAND_DISPATCH_INTERVAL_MS = "25"
     } else {
         $env:WORKER_PORT = [string]$Port
         $env:FLOWFORGE_WORKER_DB_POOL_SIZE = [string]$PoolSize
         $env:FLOWFORGE_WORKER_ID = $instance
         $env:FLOWFORGE_WORKER_CONCURRENCY = [string]$topologyConfig.worker.concurrency
+        $env:FLOWFORGE_WORKER_RESULT_BATCH_SIZE = "500"
+        $env:FLOWFORGE_WORKER_RESULT_POLL_INTERVAL_MS = "25"
     }
     $quotedJar = '"' + $Jar + '"'
     $process = Start-BackgroundProcess -FilePath "java" `

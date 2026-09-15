@@ -1,10 +1,13 @@
 package io.flowforge.controlplane.adapter.out.messaging;
 
 import io.flowforge.observability.TraceContextSnapshot;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.sql.PreparedStatement;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -15,9 +18,11 @@ import java.util.UUID;
 @Repository
 public class OutboxMessageRepository {
     private final JdbcClient jdbc;
+    private final JdbcTemplate jdbcTemplate;
 
-    public OutboxMessageRepository(JdbcClient jdbc) {
+    public OutboxMessageRepository(JdbcClient jdbc, JdbcTemplate jdbcTemplate) {
         this.jdbc = jdbc;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     @Transactional
@@ -102,6 +107,30 @@ public class OutboxMessageRepository {
                 .param("claimToken", claimToken)
                 .param("publishedAt", timestamp(publishedAt))
                 .update() == 1;
+    }
+
+    @Transactional
+    public int[] markPublishedBatch(List<OutboxMessage> messages, Instant publishedAt) {
+        if (messages.isEmpty()) return new int[0];
+        return jdbcTemplate.batchUpdate("""
+                UPDATE control_plane_outbox
+                   SET status = 'PUBLISHED', published_at = ?, claimed_by = NULL,
+                       claimed_at = NULL, claimed_until = NULL, claim_token = NULL, last_error = NULL
+                 WHERE id = ? AND status = 'IN_FLIGHT' AND claim_token = ?
+                """, new BatchPreparedStatementSetter() {
+            @Override
+            public void setValues(PreparedStatement statement, int index) throws java.sql.SQLException {
+                OutboxMessage message = messages.get(index);
+                statement.setTimestamp(1, timestamp(publishedAt));
+                statement.setObject(2, message.id());
+                statement.setObject(3, message.claimToken());
+            }
+
+            @Override
+            public int getBatchSize() {
+                return messages.size();
+            }
+        });
     }
 
     @Transactional

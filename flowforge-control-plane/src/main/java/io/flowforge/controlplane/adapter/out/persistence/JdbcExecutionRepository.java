@@ -1,12 +1,14 @@
 package io.flowforge.controlplane.adapter.out.persistence;
 
 import io.flowforge.application.execution.ExecutionConflictException;
+import io.flowforge.application.execution.ExecutionSummary;
 import io.flowforge.application.execution.AdmissionBackpressureObserver;
 import io.flowforge.application.execution.AdmissionOverloadedException;
 import io.flowforge.application.execution.ConcurrencyLimitExceededException;
 import io.flowforge.application.execution.ConcurrencyLifecycleObserver;
 import io.flowforge.application.execution.ExecutionNotFoundException;
 import io.flowforge.application.execution.AttemptTimeoutRecovery;
+
 import io.flowforge.application.execution.AttemptLeaseRecovery;
 import io.flowforge.application.execution.DurableTaskQueue;
 import io.flowforge.application.execution.ExecutionRepository;
@@ -18,7 +20,9 @@ import io.flowforge.application.execution.TaskOutcome;
 import io.flowforge.application.execution.TaskWorkItem;
 import io.flowforge.application.execution.TimeoutLifecycleObserver;
 import io.flowforge.application.execution.WorkflowNotPublishedException;
+import io.flowforge.application.workflow.PageResult;
 import io.flowforge.application.coordination.CoordinationPermit;
+
 import io.flowforge.application.coordination.CoordinationPermitLedger;
 import io.flowforge.application.coordination.CoordinationPermitService;
 import io.flowforge.domain.tenancy.TenantId;
@@ -46,6 +50,8 @@ import io.flowforge.messaging.TaskCommandV1;
 import io.flowforge.messaging.SecretReferenceV1;
 import io.flowforge.observability.TraceContextPropagation;
 import io.flowforge.observability.TraceContextSnapshot;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.ObjectProvider;
@@ -56,6 +62,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -73,6 +80,7 @@ import java.util.UUID;
 public class JdbcExecutionRepository implements ExecutionRepository, DurableTaskQueue, AttemptTimeoutRecovery,
         AttemptLeaseRecovery {
     private final JdbcClient jdbc;
+    private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final RetryLifecycleObserver retryObserver;
     private final TimeoutLifecycleObserver timeoutObserver;
@@ -88,6 +96,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
 
     public JdbcExecutionRepository(
             JdbcClient jdbc,
+            JdbcTemplate jdbcTemplate,
             ObjectMapper objectMapper,
             RetryLifecycleObserver retryObserver,
             TimeoutLifecycleObserver timeoutObserver,
@@ -116,6 +125,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
             throw new IllegalArgumentException("Admission retry delay must be positive");
         }
         this.jdbc = jdbc;
+        this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
         this.retryObserver = retryObserver;
         this.timeoutObserver = timeoutObserver;
@@ -316,8 +326,53 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public PageResult<ExecutionSummary> list(TenantId tenantId, int page, int size, WorkflowRunStatus statusFilter) {
+        int offset = page * size;
+        String statusClause = statusFilter != null ? " AND status = :status" : "";
+
+        long total = jdbc.sql("""
+                SELECT COUNT(*)
+                  FROM workflow_execution
+                 WHERE tenant_id = :tenantId
+                """ + statusClause)
+                .param("tenantId", tenantId.value())
+                .param("status", statusFilter != null ? statusFilter.name() : null)
+                .query(Long.class)
+                .single();
+
+        List<ExecutionSummary> items = jdbc.sql("""
+                SELECT id, workflow_id, workflow_version_number, status, state_version,
+                       created_at, started_at, finished_at
+                  FROM workflow_execution
+                 WHERE tenant_id = :tenantId
+                """ + statusClause + """
+                 ORDER BY created_at DESC, id DESC
+                 LIMIT :limit OFFSET :offset
+                """)
+                .param("tenantId", tenantId.value())
+                .param("status", statusFilter != null ? statusFilter.name() : null)
+                .param("limit", size)
+                .param("offset", offset)
+                .query((rs, rowNum) -> new ExecutionSummary(
+                        rs.getObject("id", UUID.class),
+                        rs.getObject("workflow_id", UUID.class),
+                        rs.getInt("workflow_version_number"),
+                        WorkflowRunStatus.valueOf(rs.getString("status")),
+                        rs.getLong("state_version"),
+                        instant(rs.getObject("created_at")),
+                        instant(rs.getObject("started_at")),
+                        instant(rs.getObject("finished_at"))
+                ))
+                .list();
+
+        return new PageResult<>(items, page, size, total);
+    }
+
+    @Override
     @Transactional
     public List<TenantId> readyTenants(Instant now, int limit) {
+
         return jdbc.sql("""
                 SELECT we.tenant_id
                   FROM task_execution te
@@ -551,7 +606,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                    AND we.tenant_id = :tenantId
                 """ + workflowFilter + """
                  ORDER BY te.created_at, te.id
-                 FOR UPDATE OF we, te SKIP LOCKED
+                 FOR UPDATE OF te SKIP LOCKED
                  LIMIT :limit
                 """)
                 .param("tenantId", tenantId.value())
@@ -576,13 +631,24 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     @Override
     @Transactional
     public TaskCompletionResult completeTask(TaskCompletion completion, Instant now) {
+        CompletionMutation mutation = mutateTaskCompletion(completion, now);
+        return new TaskCompletionResult(snapshot(mutation.workflow()), mutation.applied());
+    }
+
+    @Override
+    @Transactional
+    public boolean applyTaskCompletion(TaskCompletion completion, Instant now) {
+        return mutateTaskCompletion(completion, now).applied();
+    }
+
+    private CompletionMutation mutateTaskCompletion(TaskCompletion completion, Instant now) {
         WorkflowRun workflow = lockWorkflowForTask(completion.taskRunId());
         TaskRun current = lockTask(completion.taskRunId());
         TaskRunStatus target = completion.outcome().toTaskStatus();
 
         if (current.status().isTerminal()) {
             if (current.status() == target) {
-                return new TaskCompletionResult(snapshot(workflow), false);
+                return new CompletionMutation(workflow, false);
             }
             throw new ExecutionConflictException(
                     "Task " + current.id() + " already completed as " + current.status()
@@ -600,7 +666,7 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
         }
 
         WorkflowRun resultingWorkflow = completeRunningTask(workflow, current, completion, now);
-        return new TaskCompletionResult(snapshot(resultingWorkflow), true);
+        return new CompletionMutation(resultingWorkflow, true);
     }
 
     private WorkflowRun completeRunningTask(
@@ -722,45 +788,35 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     }
 
     private void materializeTasks(UUID executionId, UUID versionId, Instant now) {
-        List<TaskTemplate> tasks = jdbc.sql("""
-                SELECT task_key, task_type, configuration
-                  FROM workflow_task
-                 WHERE workflow_version_id = :versionId
-                 ORDER BY position
+        List<UUID> readyTaskIds = jdbc.sql("""
+                INSERT INTO task_execution(
+                    id, workflow_execution_id, task_key, status, state_version,
+                    created_at, started_at, finished_at
+                )
+                SELECT gen_random_uuid(), :executionId, task.task_key,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM workflow_dependency dependency
+                            WHERE dependency.workflow_version_id = task.workflow_version_id
+                              AND dependency.task_key = task.task_key
+                       ) THEN 'BLOCKED' ELSE 'READY' END,
+                       0, :createdAt, NULL, NULL
+                  FROM workflow_task task
+                 WHERE task.workflow_version_id = :versionId
+                 ORDER BY task.position
+                RETURNING id, status
                 """)
+                .param("executionId", executionId)
                 .param("versionId", versionId)
-                .query((rs, rowNum) -> new TaskTemplate(
-                        rs.getString("task_key"),
-                        rs.getString("task_type"),
-                        fromJson(rs.getString("configuration"))
-                ))
-                .list();
-        List<TaskDependency> dependencies = loadDependencies(versionId);
-        Map<String, TaskRunStatus> statuses = DagResolver.initialTaskStatuses(
-                tasks.stream().map(TaskTemplate::taskKey).toList(),
-                dependencies
-        );
-
-        for (TaskTemplate task : tasks) {
-            UUID taskId = UUID.randomUUID();
-            TaskRunStatus status = statuses.get(task.taskKey());
-            jdbc.sql("""
-                    INSERT INTO task_execution(
-                        id, workflow_execution_id, task_key, status, state_version,
-                        created_at, started_at, finished_at
-                    ) VALUES (
-                        :id, :executionId, :taskKey, :status, 0, :createdAt, NULL, NULL
-                    )
-                    """)
-                    .param("id", taskId)
-                    .param("executionId", executionId)
-                    .param("taskKey", task.taskKey())
-                    .param("status", status.name())
-                    .param("createdAt", timestamp(now))
-                    .update();
-            if (status == TaskRunStatus.READY) {
-                insertEvent(executionId, taskId, ExecutionEventType.TASK_READY, "BLOCKED", "READY", now);
-            }
+                .param("createdAt", timestamp(now))
+                .query((rs, rowNum) -> "READY".equals(rs.getString("status"))
+                        ? rs.getObject("id", UUID.class)
+                        : null)
+                .list()
+                .stream()
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        for (UUID taskId : readyTaskIds) {
+            insertEvent(executionId, taskId, ExecutionEventType.TASK_READY, "BLOCKED", "READY", now);
         }
     }
 
@@ -941,6 +997,13 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
 
     private void markNewlyReadyTasks(UUID executionId, Instant now) {
         StoredExecution stored = storedExecution(executionId);
+        List<TaskRun> tasks = loadTasks(executionId);
+        Map<String, TaskRunStatus> statuses = new LinkedHashMap<>();
+        tasks.forEach(task -> statuses.put(task.taskKey(), task.status()));
+        List<TaskDependency> dependencies = loadDependencies(stored.workflowVersionId());
+        Set<String> newlyReady = DagResolver.newlyReadyTasks(statuses, dependencies);
+        if (newlyReady.isEmpty()) return;
+
         lockReadyCapacity(stored.tenantId(), stored.workflowId(), now);
         TenantQuotaPolicy quota = quotas.quotaFor(stored.tenantId()).policy();
         long available = Math.max(
@@ -951,21 +1014,110 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
                 )
         );
         if (available == 0) return;
-        List<TaskRun> tasks = loadTasks(executionId);
-        Map<String, TaskRunStatus> statuses = new LinkedHashMap<>();
-        tasks.forEach(task -> statuses.put(task.taskKey(), task.status()));
-        List<TaskDependency> dependencies = loadDependencies(stored.workflowVersionId());
 
-        for (String taskKey : DagResolver.newlyReadyTasks(statuses, dependencies)
-                .stream().limit(available).toList()) {
-            TaskRun blocked = tasks.stream()
-                    .filter(task -> task.taskKey().equals(taskKey))
-                    .findFirst()
-                    .orElseThrow();
+        Set<String> selectedKeys = newlyReady.stream().limit(available).collect(java.util.stream.Collectors.toSet());
+        List<TaskRun> selected = tasks.stream().filter(task -> selectedKeys.contains(task.taskKey())).toList();
+        transitionTasksToReady(stored, selected, now);
+    }
+
+    private void transitionTasksToReady(StoredExecution stored, List<TaskRun> blockedTasks, Instant now) {
+        if (blockedTasks.isEmpty()) return;
+        List<ReadyTransition> transitions = blockedTasks.stream().map(blocked -> {
             TaskRun ready = blocked.transitionTo(TaskRunStatus.READY, now);
-            updateTask(blocked, ready);
-            insertEvent(executionId, ready.id(), ExecutionEventType.TASK_READY,
-                    blocked.status().name(), ready.status().name(), now);
+            UUID eventId = UUID.randomUUID();
+            MessageEnvelope<ExecutionEventV1> envelope = new MessageEnvelope<>(
+                    eventId,
+                    ExecutionEventV1.EVENT_TYPE,
+                    ExecutionEventV1.SCHEMA_VERSION,
+                    now,
+                    stored.id(),
+                    stored.tenantId().value(),
+                    new ExecutionEventV1(
+                            stored.id(), ready.id(), ExecutionEventType.TASK_READY.name(),
+                            blocked.status().name(), ready.status().name()
+                    )
+            );
+            return new ReadyTransition(blocked, ready, eventId, toJson(envelope));
+        }).toList();
+
+        assertBatchChangedEveryRow(jdbcTemplate.batchUpdate("""
+                UPDATE task_execution
+                   SET status = ?, state_version = ?, started_at = ?, finished_at = ?, next_attempt_at = ?
+                 WHERE id = ? AND state_version = ?
+                """, batch(transitions, (statement, transition) -> {
+            statement.setString(1, transition.ready().status().name());
+            statement.setLong(2, transition.ready().stateVersion());
+            statement.setTimestamp(3, timestamp(transition.ready().startedAt()));
+            statement.setTimestamp(4, timestamp(transition.ready().finishedAt()));
+            statement.setTimestamp(5, timestamp(transition.ready().nextAttemptAt()));
+            statement.setObject(6, transition.ready().id());
+            statement.setLong(7, transition.blocked().stateVersion());
+        })), "Task became non-ready while advancing the DAG");
+
+        jdbcTemplate.batchUpdate("""
+                INSERT INTO execution_event(
+                    tenant_id, id, workflow_execution_id, task_execution_id, event_type,
+                    from_status, to_status, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, batch(transitions, (statement, transition) -> {
+            statement.setString(1, stored.tenantId().value());
+            statement.setObject(2, transition.eventId());
+            statement.setObject(3, stored.id());
+            statement.setObject(4, transition.ready().id());
+            statement.setString(5, ExecutionEventType.TASK_READY.name());
+            statement.setString(6, transition.blocked().status().name());
+            statement.setString(7, transition.ready().status().name());
+            statement.setTimestamp(8, timestamp(now));
+        }));
+
+        TraceContextSnapshot trace = TraceContextPropagation.capture();
+        jdbcTemplate.batchUpdate("""
+                INSERT INTO control_plane_outbox(
+                    tenant_id, id, workflow_execution_id, task_execution_id, source_event_id,
+                    message_kind, topic, record_key, event_type, schema_version,
+                    payload, status, available_at, created_at,
+                    trace_parent, trace_state, trace_baggage
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS jsonb), 'PENDING', ?, ?, ?, ?, ?)
+                """, batch(transitions, (statement, transition) -> {
+            statement.setString(1, stored.tenantId().value());
+            statement.setObject(2, transition.eventId());
+            statement.setObject(3, stored.id());
+            statement.setObject(4, transition.ready().id());
+            statement.setObject(5, transition.eventId());
+            statement.setString(6, "EXECUTION_EVENT");
+            statement.setString(7, FlowForgeTopics.EXECUTION_EVENTS_V1);
+            statement.setString(8, stored.id().toString());
+            statement.setString(9, ExecutionEventV1.EVENT_TYPE);
+            statement.setInt(10, ExecutionEventV1.SCHEMA_VERSION);
+            statement.setString(11, transition.payload());
+            statement.setTimestamp(12, timestamp(now));
+            statement.setTimestamp(13, timestamp(now));
+            statement.setString(14, trace.traceParent());
+            statement.setString(15, trace.traceState());
+            statement.setString(16, trace.baggage());
+        }));
+    }
+
+    private static <T> BatchPreparedStatementSetter batch(
+            List<T> items,
+            SqlBatchSetter<T> setter
+    ) {
+        return new BatchPreparedStatementSetter() {
+            @Override
+            public void setValues(PreparedStatement statement, int index) throws SQLException {
+                setter.set(statement, items.get(index));
+            }
+
+            @Override
+            public int getBatchSize() {
+                return items.size();
+            }
+        };
+    }
+
+    private static void assertBatchChangedEveryRow(int[] updates, String message) {
+        for (int changed : updates) {
+            if (changed != 1) throw new ExecutionConflictException(message);
         }
     }
 
@@ -1700,6 +1852,14 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     private record StoredExecution(UUID id, TenantId tenantId, UUID workflowId, UUID workflowVersionId) {
     }
 
+    private record ReadyTransition(TaskRun blocked, TaskRun ready, UUID eventId, String payload) {
+    }
+
+    @FunctionalInterface
+    private interface SqlBatchSetter<T> {
+        void set(PreparedStatement statement, T item) throws SQLException;
+    }
+
     private record TaskTemplate(String taskKey, String taskType, Map<String, Object> configuration) {
     }
 
@@ -1723,5 +1883,8 @@ public class JdbcExecutionRepository implements ExecutionRepository, DurableTask
     }
 
     private record CompletedAttempt(UUID concurrencyPermitToken) {
+    }
+
+    private record CompletionMutation(WorkflowRun workflow, boolean applied) {
     }
 }

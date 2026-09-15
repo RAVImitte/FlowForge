@@ -119,6 +119,7 @@ public final class FlowForgeLoadGenerator {
                 workflowId, "load-" + runId + "-" + sequence
         );
         accumulator.recordStatus(started.statusCode());
+        accumulator.recordAdmissionStatus(started.statusCode());
         accumulator.startLatencies.add(started.durationNanos());
         if (started.statusCode() == 429) {
             accumulator.rejected.increment();
@@ -167,6 +168,7 @@ public final class FlowForgeLoadGenerator {
         Instant fireAt = clock.instant().plus(profile.scheduleLead());
         FlowForgeClient.TimedResponse created = client.createSchedule(workflowId, fireAt);
         accumulator.recordStatus(created.statusCode());
+        accumulator.recordAdmissionStatus(created.statusCode());
         accumulator.startLatencies.add(created.durationNanos());
         if (created.statusCode() == 429) {
             accumulator.rejected.increment();
@@ -217,15 +219,22 @@ public final class FlowForgeLoadGenerator {
         private final LongAdder terminalFailed = new LongAdder();
         private final LongAdder rejected = new LongAdder();
         private final LongAdder unexpectedResponses = new LongAdder();
+        private final LongAdder unexpectedServerErrors = new LongAdder();
         private final LongAdder timedOut = new LongAdder();
         private final LongAdder transportErrors = new LongAdder();
         private final LongAdder pollTransportErrors = new LongAdder();
         private final List<Long> startLatencies = Collections.synchronizedList(new ArrayList<>());
         private final List<Long> completionLatencies = Collections.synchronizedList(new ArrayList<>());
         private final Map<Integer, LongAdder> statuses = new ConcurrentHashMap<>();
+        private final Map<Integer, LongAdder> admissionStatuses = new ConcurrentHashMap<>();
 
         void recordStatus(int status) {
             statuses.computeIfAbsent(status, ignored -> new LongAdder()).increment();
+        }
+
+        void recordAdmissionStatus(int status) {
+            admissionStatuses.computeIfAbsent(status, ignored -> new LongAdder()).increment();
+            if (status >= 500 && status <= 599) unexpectedServerErrors.increment();
         }
 
         LoadTestReport report(
@@ -241,6 +250,7 @@ public final class FlowForgeLoadGenerator {
             long failedCount = terminalFailed.sum();
             long rejectedCount = rejected.sum();
             long unexpectedResponseCount = unexpectedResponses.sum();
+            long unexpectedServerErrorCount = unexpectedServerErrors.sum();
             long timedOutCount = timedOut.sum();
             long transportErrorCount = transportErrors.sum();
             long pollTransportErrorCount = pollTransportErrors.sum();
@@ -258,13 +268,17 @@ public final class FlowForgeLoadGenerator {
                     minimum("successRatio", limits.minimumSuccessRatio(), successRatio),
                     maximum("errorRatio", limits.maximumErrorRatio(), errorRatio),
                     maximum("start.p95Ms", limits.maximumStartP95Ms(), start.p95()),
-                    maximum("completion.p95Ms", limits.maximumCompletionP95Ms(), completion.p95())
+                    maximum("completion.p95Ms", limits.maximumCompletionP95Ms(), completion.p95()),
+                    maximum("admission.unexpected5xx", 0, unexpectedServerErrorCount)
             );
             Map<String, Long> statusCounts = new LinkedHashMap<>();
             statuses.entrySet().stream().sorted(Map.Entry.comparingByKey())
                     .forEach(entry -> statusCounts.put(String.valueOf(entry.getKey()), entry.getValue().sum()));
+            Map<String, Long> admissionStatusCounts = new LinkedHashMap<>();
+            admissionStatuses.entrySet().stream().sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> admissionStatusCounts.put(String.valueOf(entry.getKey()), entry.getValue().sum()));
             return new LoadTestReport(
-                    2, runId, profile.name(), profile.mode().name(), startedAt, finishedAt,
+                    3, runId, profile.name(), profile.mode().name(), startedAt, finishedAt,
                     round(durationSeconds),
                     new LoadTestReport.Workload(
                             profile.baseUrls(), profile.operations(), profile.arrivalRatePerSecond(),
@@ -274,7 +288,8 @@ public final class FlowForgeLoadGenerator {
                     ),
                     new LoadTestReport.Counts(
                             attemptedCount, acceptedCount, succeededCount, failedCount,
-                            rejectedCount, unexpectedResponseCount, timedOutCount, transportErrorCount,
+                            rejectedCount, unexpectedResponseCount, unexpectedServerErrorCount,
+                            timedOutCount, transportErrorCount,
                             pollTransportErrorCount
                     ),
                     new LoadTestReport.Rates(
@@ -284,7 +299,7 @@ public final class FlowForgeLoadGenerator {
                             round(acceptanceRatio), round(successRatio), round(errorRatio)
                     ),
                     new LoadTestReport.Latencies(start, completion),
-                    Map.copyOf(statusCounts),
+                    Map.copyOf(statusCounts), Map.copyOf(admissionStatusCounts),
                     thresholds,
                     thresholds.stream().allMatch(LoadTestReport.ThresholdResult::passed)
             );

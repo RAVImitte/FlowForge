@@ -19,7 +19,7 @@ To target an already running distributed topology, use:
 
 Reports are written under `load-testing/results/` and ignored by default so accidental laptop results are not presented as universal capacity evidence. Curated reports for the measured topology matrix will be copied to `docs/performance/` during Slice 6.5c with machine, JVM, replica, partition, pool, and dependency metadata.
 
-Exit code `0` means every configured threshold passed. Exit code `2` from the executable means the run completed but at least one threshold failed. The PowerShell wrapper converts any non-zero code into a terminating error suitable for CI or scripted matrix execution. Report schema V2 distinguishes terminal operation transport errors from transient polling transport errors that were retried for already accepted executions.
+Exit code `0` means every configured threshold passed. Exit code `2` from the executable means the run completed but at least one threshold failed. The PowerShell wrapper converts any non-zero code into a terminating error suitable for CI or scripted matrix execution. Report schema V3 separates admission HTTP statuses from polling traffic, fails every profile on an unexpected admission 5xx, and distinguishes terminal operation transport errors from transient polling transport errors retried for accepted executions.
 
 The API profile's completion latency begins after the start request is accepted and ends when the execution reaches a terminal state. The scheduled profile's completion latency is schedule fire lag, not workflow terminal latency; the topology probe added in Slice 6.5b will capture terminal workflow counts independently.
 
@@ -31,9 +31,12 @@ The topology runner builds the executable artifacts, starts PostgreSQL/Kafka/Red
 .\scripts\run-load-topology.ps1 -Topology single-6p -Profile smoke
 .\scripts\run-load-topology.ps1 -Topology workers-2-6p -Profile smoke -SkipBuild
 .\scripts\run-load-topology.ps1 -Topology balanced-2x2-6p -Profile smoke -SkipBuild
+.\scripts\run-load-topology.ps1 -Topology workers-4-c3-12p -Profile phase8-intermediate -SkipBuild
 ```
 
 Named topologies live in `load-testing/topologies/` and declare control-plane/worker ports, heap bounds, database-pool sizes, worker concurrency, Kafka partitions, and probe timing. Multi-control-plane runs distribute API operations round-robin; Kafka consumer groups independently distribute command, result, and heartbeat partitions.
+
+Phase 8 adds a four-worker/twelve-partition topology, a bounded 1,000-workflow intermediate gate, and explicit 10,000-workflow API and scheduler soak profiles. The long profiles are acceptance workloads and must not be described as achieved until their generated reports pass exact durable reconciliation.
 
 Each ignored run directory contains the derived profile, workload report, combined `report.json`, per-process logs, and the load-generator exit code. The combined report records host/JVM/Docker/Git metadata; per-replica CPU, heap, throughput, retry, timeout, and duplicate counters; queue depth/age; PostgreSQL connections and blocked locks; Kafka lag and partition ownership; durable execution counts; and useful-work distribution. A run passes only when workload thresholds, process exit, and durable database reconciliation all pass.
 

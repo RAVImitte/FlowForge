@@ -452,3 +452,15 @@ Verification notes:
 - After the third recovery increment, the complete Rancher Desktop-backed reactor succeeds across 92 suites with 281 tests passing and no failures, errors, or skipped tests.
 - The final same-revision release matrix passes 24 security tests, two upgrade/rollback tests, thirteen recovery tests, strict Helm/kubectl validation, and generation of a validated 156-component CycloneDX 1.6 SBOM.
 - After the release-closeout contract, the complete clean Rancher Desktop-backed reactor succeeds across 92 suites with 282 tests passing and no failures, errors, or skipped tests.
+
+## Phase 8 - Performance Hardening and Capacity Validation
+
+Status: **IN PROGRESS**
+
+Current milestone: **Slice 8.1 - Benchmark contract and admission protection**
+
+Target outcome: repeatably complete 10,000 ten-task workflows over 30 minutes on four workers and twelve Kafka partitions, sustaining at least 55.6 tasks/second with exact durable reconciliation and controlled HTTP 429 overload shedding.
+
+Detailed implementation plan: [Phase 8 plan](PHASE_8_PLAN.md)
+
+Phase 8 targets are acceptance criteria, not achieved benchmark claims. The current verified baseline and pressure boundary remain documented in the capacity model and Phase 8 plan until new evidence replaces them.

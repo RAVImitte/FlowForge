@@ -50,6 +50,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
         "flowforge.outbox.publisher-enabled=false",
         "flowforge.outbox.command-dispatch-enabled=false",
         "flowforge.results.consumer-enabled=false",
+        "flowforge.results.inline-dispatch-enabled=true",
         "flowforge.retries.scheduler-enabled=false",
         "flowforge.timeouts.reaper-enabled=false"
 })
