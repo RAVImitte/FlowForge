@@ -1,8 +1,412 @@
-# FlowForge
+<div align="center">
 
-FlowForge is a production-oriented distributed workflow and job orchestration platform. Phases 1-6 establish durable, observable distributed execution; Phase 7 adds security and operational release readiness.
+# ⚙️ FlowForge
 
-## Current capabilities
+### Distributed workflow orchestration that doesn't lose work — even when everything else fails.
+
+Design a DAG of tasks, publish it, hit **Start**, and watch FlowForge fan work out across
+horizontally scalable workers with durable at-least-once delivery, duplicate suppression, retries,
+schedules, rate limits, tenant isolation, and full observability.
+
+[![CI](https://github.com/RAVImitte/FlowForge/actions/workflows/ci.yml/badge.svg)](https://github.com/RAVImitte/FlowForge/actions/workflows/ci.yml)
+![Java 21](https://img.shields.io/badge/Java-21-orange?logo=openjdk)
+![Spring Boot 4](https://img.shields.io/badge/Spring%20Boot-4.1-6DB33F?logo=springboot)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17-4169E1?logo=postgresql&logoColor=white)
+![Kafka](https://img.shields.io/badge/Kafka-4.3%20KRaft-231F20?logo=apachekafka)
+![Redis](https://img.shields.io/badge/Redis-7.4-DC382D?logo=redis&logoColor=white)
+![Helm](https://img.shields.io/badge/Kubernetes-Helm-0F1689?logo=helm)
+
+[Quick start](#-quick-start-5-minutes) •
+[UI demo](#-guided-demo-with-the-web-ui) •
+[Integrate](#-integration-guide) •
+[Architecture](#-architecture) •
+[API](#api-reference) •
+[Docs](#-documentation)
+
+</div>
+
+---
+
+## ✨ Why FlowForge?
+
+| | |
+|---|---|
+| 🧩 **DAG-native** | Linear, fan-out, fan-in, and mixed graphs validated as acyclic before they can run. Published versions are immutable. |
+| 🛡️ **Never loses work** | PostgreSQL is the source of truth. Transactional outbox + inbox, fencing tokens, and leases survive broker, worker, and control-plane crashes. |
+| 🔁 **Safe to retry everything** | Idempotent starts (`Idempotency-Key`), duplicate-suppressed results, optimistic locking via `ETag`/`If-Match`. |
+| 📈 **Scales horizontally** | Workers and control-plane replicas scale with Kafka partitions; `FOR UPDATE SKIP LOCKED` keeps claims disjoint. |
+| ⏰ **Schedules built in** | One-time and cron schedules with IANA time zones and explicit misfire policies. |
+| 🚦 **Back-pressure** | Per-workflow and per-task concurrency limits, token-bucket rate limits, and HTTP 429 + `Retry-After`. |
+| 🏢 **Multi-tenant & secure** | OAuth 2.0 JWT, role-based access, tenant quotas, secret references, append-only audit log. |
+| 🔭 **Observable** | Prometheus metrics, OpenTelemetry traces, ECS JSON logs, a Grafana dashboard, and SLO burn-rate alerts. |
+| 🖥️ **Built-in web UI** | Create workflows visually, preview the DAG, start executions, and watch tasks light up live. |
+
+---
+
+## 🏗 Architecture
+
+```mermaid
+flowchart LR
+    UI["🖥️ Web UI<br/>(served by control plane)"] -->|REST /api/v1| CP
+    CLI["🔌 Your services<br/>curl · SDK · CI"] -->|REST /api/v1| CP
+
+    subgraph CP["Control plane (Spring Boot, :8080)"]
+        API[HTTP API] --> APP[Use cases<br/>DAG engine]
+        APP --> SCHED[Scheduler]
+        APP --> OUTBOX[Transactional outbox]
+    end
+
+    APP <--> PG[(PostgreSQL<br/>source of truth)]
+    OUTBOX -->|task commands| K{{Kafka}}
+    K -->|commands| W1[Worker 1]
+    K -->|commands| W2[Worker N]
+    W1 -->|results · heartbeats| K
+    W2 -->|results · heartbeats| K
+    K -->|results| APP
+    APP <-.->|permit & rate-limit mirror| R[(Redis)]
+    CP -.->|metrics · traces| OBS[Prometheus · Grafana · OTel]
+```
+
+**Life of an execution**
+
+1. A workflow is created as a **draft**, then **published** as an immutable version.
+2. Starting an execution materializes root tasks as `READY` and dependents as `BLOCKED`.
+3. Ready tasks are written to the outbox in the same transaction, then published to Kafka.
+4. A worker claims the command, runs the handler (`NOOP`, `DELAY`, `FAIL`, or your own), and publishes a result.
+5. The control plane applies the result atomically, unblocks dependents, and appends to the event journal.
+6. Repeat until the workflow is `SUCCEEDED`, `FAILED`, or `CANCELLED`.
+
+---
+
+## 🚀 Quick start (5 minutes)
+
+**You need:** Java 21 and a Docker-compatible runtime (Docker Desktop, Rancher Desktop/Moby, Podman). The Maven wrapper downloads Maven for you.
+
+FlowForge runs in two modes:
+
+| Mode | What runs | Best for |
+|---|---|---|
+| **Lite** | PostgreSQL + control plane (tasks execute in-process) | Fast UI demos, API exploration |
+| **Distributed** | PostgreSQL + Kafka + Redis + control plane + N workers | Realistic demos, scaling, failure drills |
+
+### Lite mode
+
+```powershell
+git clone https://github.com/RAVImitte/FlowForge.git
+cd FlowForge
+docker compose up -d postgres
+.\mvnw.cmd -pl flowforge-control-plane -am spring-boot:run
+```
+
+On macOS/Linux use `./mvnw` instead of `.\mvnw.cmd`.
+
+When you see `Started FlowForgeApplication`, open **http://localhost:8080** 🎉
+
+### Distributed mode
+
+```powershell
+docker compose up -d postgres kafka redis
+
+# Terminal 1 — control plane
+$env:SPRING_PROFILES_ACTIVE = 'production'
+$env:FLOWFORGE_SECURITY_ENABLED = 'false'   # local only; see Integration guide for JWT
+.\mvnw.cmd -pl flowforge-control-plane -am spring-boot:run
+
+# Terminal 2 — worker (start more on other ports to scale out)
+$env:SPRING_PROFILES_ACTIVE = 'production'
+.\mvnw.cmd -pl flowforge-worker -am spring-boot:run
+
+# Optional — dashboards
+docker compose --profile observability up -d prometheus grafana otel-collector
+```
+
+| Service | URL |
+|---|---|
+| Web UI | http://localhost:8080 |
+| Control-plane health | http://localhost:8080/actuator/health |
+| Worker health | http://localhost:8081/actuator/health |
+| Prometheus | http://localhost:9090 |
+| Grafana (FlowForge dashboard) | http://localhost:3000 |
+
+To add a second worker: `$env:WORKER_PORT = '8082'` in a new terminal before starting it.
+
+> ⚠️ The web UI does not send bearer tokens, so it is intended for local/demo use with
+> `FLOWFORGE_SECURITY_ENABLED=false`. With security enabled, only the REST API (with a JWT) is reachable.
+
+---
+
+## 🎬 Guided demo with the web UI
+
+The control plane serves a Bootstrap UI with live DAG visualization at **http://localhost:8080**.
+
+| Page | Path | What you can do |
+|---|---|---|
+| Dashboard | `/` | Workflow stats, workflow list, recent executions, archive |
+| New workflow | `/workflow/create.html` | Add tasks and dependencies with a live DAG preview |
+| Workflow detail | `/workflow/detail.html?id=…` | Inspect tasks/dependencies, **Publish**, **Start execution** |
+| Executions | `/executions/index.html` | Filter by status; auto-refreshes every 3 s |
+| Execution detail | `/execution/detail.html?id=…` | Color-coded DAG, task runs, attempts, event log, **Cancel** |
+
+### Scene 1 — The happy path: an order pipeline (fan-out / fan-in)
+
+1. Open **New Workflow** and enter:
+   - **Name:** `Order processing demo`
+   - **Max concurrent executions:** `5`
+2. Click **Add Task** five times and fill them in:
+
+   | Key | Name | Type | Configuration |
+   |---|---|---|---|
+   | `VALIDATE_ORDER` | Validate order | `NOOP` | `{}` |
+   | `CHARGE_PAYMENT` | Charge payment | `DELAY` | `{"durationMs": 4000}` |
+   | `RESERVE_STOCK` | Reserve stock | `DELAY` | `{"durationMs": 6000}` |
+   | `SHIP_ORDER` | Ship order | `DELAY` | `{"durationMs": 3000}` |
+   | `NOTIFY_CUSTOMER` | Notify customer | `NOOP` | `{}` |
+
+3. Click **Add Dependency** and connect them. Watch the **DAG Preview** draw the diamond:
+
+   | Task | Depends on |
+   |---|---|
+   | `CHARGE_PAYMENT` | `VALIDATE_ORDER` |
+   | `RESERVE_STOCK` | `VALIDATE_ORDER` |
+   | `SHIP_ORDER` | `CHARGE_PAYMENT` |
+   | `SHIP_ORDER` | `RESERVE_STOCK` |
+   | `NOTIFY_CUSTOMER` | `SHIP_ORDER` |
+
+   ```mermaid
+   flowchart LR
+       VALIDATE_ORDER --> CHARGE_PAYMENT --> SHIP_ORDER
+       VALIDATE_ORDER --> RESERVE_STOCK --> SHIP_ORDER
+       SHIP_ORDER --> NOTIFY_CUSTOMER
+   ```
+
+4. Click **Create Workflow**. On the detail page the version is a **DRAFT**; click **Publish**.
+5. Click **Start Execution**. The modal pre-fills an **Idempotency Key** — click **Start**.
+6. On the execution page, watch the DAG update every 3 seconds:
+   `VALIDATE_ORDER` completes → `CHARGE_PAYMENT` and `RESERVE_STOCK` run **in parallel** →
+   `SHIP_ORDER` waits for **both** (fan-in) → `NOTIFY_CUSTOMER` → workflow **SUCCEEDED** ✅
+7. Scroll the **Event Log** to see every state transition recorded in order.
+
+### Scene 2 — Idempotency: start the same thing twice
+
+The UI generates a fresh key every time, so show this one from a terminal. Copy the workflow ID from the
+browser address bar (`detail.html?id=…`) and run:
+
+```powershell
+$id = '<workflow-id>'
+1..2 | ForEach-Object {
+    (Invoke-RestMethod -Method Post -Uri "http://localhost:8080/api/v1/workflows/$id/executions" `
+        -Headers @{ 'Idempotency-Key' = 'demo-order-42' }).id
+}
+```
+
+Both calls print the **same** execution ID, and the Executions page shows only one new run. That is
+exactly what a client retrying after a network timeout needs.
+
+### Scene 3 — Failure handling
+
+Create a workflow `Failure demo` with:
+
+| Key | Type | Configuration | Depends on |
+|---|---|---|---|
+| `STEP_ONE` | `NOOP` | `{}` | — |
+| `BROKEN_STEP` | `FAIL` | `{"errorCode": "PAYMENT_DECLINED", "message": "Card declined"}` | `STEP_ONE` |
+| `NEVER_RUNS` | `NOOP` | `{}` | `BROKEN_STEP` |
+
+Publish and start it. The **Attempts** table shows `PAYMENT_DECLINED`, the workflow ends **FAILED**,
+and `NEVER_RUNS` is never dispatched.
+
+### Scene 4 — Cancellation
+
+Create a workflow with two chained `DELAY` tasks of `{"durationMs": 15000}`, start it, and press
+**Cancel** while the first task runs. The workflow moves to `CANCELLING`, lets the in-flight task finish,
+then settles on `CANCELLED` — the second task is never dispatched.
+
+### Scene 5 — Kill a worker (distributed mode)
+
+Run two workers, start the order pipeline, and stop one worker (<kbd>Ctrl</kbd>+<kbd>C</kbd>) while
+`DELAY` tasks are running. The stopping worker drains its in-flight task, Kafka rebalances its partitions
+to the survivor, and the execution still finishes. Kill a worker process hard instead and its attempt lease
+expires and is recovered by the retry policy. Open Grafana at http://localhost:3000 to watch throughput,
+backlog age, and retries while it happens.
+
+> 💡 **Demo tips:** keep the Executions page open on a second screen — it auto-refreshes. Use
+> `DELAY` durations of 3–10 s so the audience can see tasks transition; the maximum is 60 s.
+
+---
+
+## 🔌 Integration guide
+
+Everything the UI does is a plain REST call under `/api/v1`, so any language or CI system can drive FlowForge.
+
+### 1. Create → publish → start → poll
+
+**PowerShell**
+
+```powershell
+$base = 'http://localhost:8080/api/v1'
+$body = @{
+    name  = 'Nightly report'
+    tasks = @(
+        @{ key = 'EXTRACT';   name = 'Extract';   type = 'DELAY'; configuration = @{ durationMs = 2000 } }
+        @{ key = 'TRANSFORM'; name = 'Transform'; type = 'NOOP';  configuration = @{} }
+    )
+    dependencies = @(@{ taskKey = 'TRANSFORM'; dependsOnTaskKey = 'EXTRACT' })
+} | ConvertTo-Json -Depth 5
+
+$wf = Invoke-RestMethod -Method Post -Uri "$base/workflows" -ContentType 'application/json' -Body $body
+Invoke-RestMethod -Method Post -Uri "$base/workflows/$($wf.id)/publish" -Headers @{ 'If-Match' = "`"$($wf.lockVersion)`"" }
+
+$exec = Invoke-RestMethod -Method Post -Uri "$base/workflows/$($wf.id)/executions" -Headers @{ 'Idempotency-Key' = 'report-2026-10-01' }
+do { Start-Sleep 1; $exec = Invoke-RestMethod "$base/executions/$($exec.id)" } until ($exec.status -in 'SUCCEEDED','FAILED','CANCELLED')
+$exec.status
+```
+
+**bash / curl**
+
+```bash
+BASE=http://localhost:8080/api/v1
+WF=$(curl -s -X POST $BASE/workflows -H 'Content-Type: application/json' -d '{
+  "name": "Nightly report",
+  "tasks": [
+    {"key": "EXTRACT",   "name": "Extract",   "type": "DELAY", "configuration": {"durationMs": 2000}},
+    {"key": "TRANSFORM", "name": "Transform", "type": "NOOP",  "configuration": {}}
+  ],
+  "dependencies": [{"taskKey": "TRANSFORM", "dependsOnTaskKey": "EXTRACT"}]
+}' | jq -r .id)
+
+curl -s -X POST $BASE/workflows/$WF/publish -H 'If-Match: "0"'
+EXEC=$(curl -s -X POST $BASE/workflows/$WF/executions -H 'Idempotency-Key: report-2026-10-01' | jq -r .id)
+curl -s $BASE/executions/$EXEC | jq '{status, tasks: [.tasks[] | {taskKey, status}]}'
+```
+
+The workflow you created via the API shows up immediately in the web UI.
+
+### 2. Rules every client should follow
+
+| Concern | Contract |
+|---|---|
+| **Starting executions** | Always send `Idempotency-Key`. Reusing a key for the same workflow returns the existing execution, so retries are safe. |
+| **Mutations** | `PUT`, `publish`, `DELETE`, and schedule changes require `If-Match: "<lockVersion>"` from the latest `ETag`. A stale value is rejected instead of silently overwriting. |
+| **Back-pressure** | HTTP `429` means capacity is saturated. Wait for the `Retry-After` header, then retry with the **same** idempotency key. |
+| **Errors** | Failures are RFC 7807 problem responses (`title`, `detail`, `violations`). |
+| **Tracing** | Send `X-Correlation-Id` to link your logs with FlowForge's; the effective ID is echoed back. |
+| **Task side effects** | Delivery is at least once. External side effects should use the command event ID as their own idempotency key. |
+
+### 3. Retries and timeouts per task
+
+Add a `reliabilityPolicy` to any task (API only; the UI uses the single-attempt default):
+
+```json
+{
+  "key": "CALL_PARTNER_API",
+  "name": "Call partner API",
+  "type": "DELAY",
+  "configuration": {"durationMs": 500},
+  "maxConcurrency": 5,
+  "reliabilityPolicy": {
+    "maxAttempts": 5,
+    "initialBackoffMs": 1000,
+    "backoffMultiplier": 2.0,
+    "maxBackoffMs": 30000,
+    "jitterFactor": 0.2,
+    "attemptTimeoutMs": 10000
+  }
+}
+```
+
+### 4. Schedule workflows
+
+Schedules require the scheduler, which is enabled in the `production` profile (or set `FLOWFORGE_SCHEDULING_ENABLED=true`).
+Cron expressions use six fields (`sec min hour day month weekday`).
+
+```bash
+# Every weekday at 02:00 Kolkata time
+curl -X POST $BASE/schedules -H 'Content-Type: application/json' -d "{
+  \"workflowId\": \"$WF\",
+  \"type\": \"CRON\",
+  \"cronExpression\": \"0 0 2 * * MON-FRI\",
+  \"timeZone\": \"Asia/Kolkata\",
+  \"misfirePolicy\": \"FIRE_ONCE\"
+}"
+
+# One-time run
+curl -X POST $BASE/schedules -H 'Content-Type: application/json' \
+  -d "{\"workflowId\": \"$WF\", \"type\": \"ONE_TIME\", \"fireAt\": \"2026-12-31T18:30:00Z\"}"
+```
+
+`misfirePolicy` is `FIRE_ONCE` (run one catch-up) or `SKIP` (record the miss and move on).
+
+### 5. Add your own task type
+
+Workers discover handlers as Spring beans. Drop a class into `flowforge-worker` and reference its type in your workflow:
+
+```java
+@Component
+public class SendEmailTaskHandler implements WorkerTaskHandler {
+    @Override
+    public String taskType() {
+        return "SEND_EMAIL";
+    }
+
+    @Override
+    public WorkerTaskResult execute(TaskExecutionContext context) {
+        var config = context.command().configuration();
+        String apiKey = context.secrets().get("apiKey");      // resolved only inside the worker
+        // Use context.idempotencyToken() as the provider's idempotency key.
+        try {
+            // ... call your email provider ...
+            return WorkerTaskResult.succeeded();
+        } catch (TransientProviderException e) {
+            return WorkerTaskResult.retryableFailure("PROVIDER_UNAVAILABLE", e.getMessage());
+        }
+    }
+}
+```
+
+Secrets are never stored inline. Declare a reference on the task and the worker resolves it at run time:
+
+```json
+"secretReferences": { "apiKey": { "provider": "env", "name": "EMAIL_API_KEY" } }
+```
+
+> Custom handlers run in **distributed mode** (worker process). Lite mode only ships the built-in `NOOP`, `DELAY`, and `FAIL` handlers.
+
+### 6. Secure it for real environments
+
+Keep `FLOWFORGE_SECURITY_ENABLED=true` (the `production` default) and point FlowForge at your OIDC provider (Keycloak, Entra ID, Auth0, …):
+
+```powershell
+$env:FLOWFORGE_OIDC_ISSUER_URI  = 'https://identity.example.com/realms/flowforge'
+$env:FLOWFORGE_OIDC_JWK_SET_URI = 'https://identity.example.com/realms/flowforge/protocol/openid-connect/certs'
+```
+
+Call the API with `Authorization: Bearer <jwt>`. The token's `roles` claim drives access and its `tenant_id` claim scopes all data:
+
+| Role | Can |
+|---|---|
+| `VIEWER` | Read workflows, executions, schedules |
+| `OPERATOR` | Viewer + start/cancel executions, pause/resume schedules |
+| `ADMIN` | Everything, including workflow/schedule changes, quotas, audit log, DLQ replay |
+| `MONITOR` | Scrape `/actuator/prometheus` |
+
+### 7. Deploy to Kubernetes
+
+```powershell
+.\scripts\build-images.ps1 -Registry <your-registry> -Tag 1.0.0
+helm lint .\deploy\helm\flowforge --strict
+helm upgrade --install flowforge .\deploy\helm\flowforge --namespace flowforge --create-namespace
+```
+
+Create the database, Kafka, Redis, and OIDC Secrets first — images run as non-root (UID 10001) and read all
+credentials from external Kubernetes Secrets. The [Helm deployment guide](deploy/helm/flowforge/README.md) lists
+the required Secret contract, values, autoscaling constraints, and rollback commands.
+
+---
+
+## 📋 Feature catalog
+
+<details>
+<summary><b>Show all capabilities (100+)</b></summary>
 
 - Create, retrieve, list, update, publish, and archive workflow definitions
 - Model task dependencies as a validated directed acyclic graph
@@ -107,107 +511,36 @@ FlowForge is a production-oriented distributed workflow and job orchestration pl
 
 Phases 1-7 are complete. The final same-revision acceptance matrix proves security and tenant isolation, populated-schema upgrade and rollback compatibility, logical restore, named-point WAL/PITR, Redis reconstruction, bounded tenant-safe DLQ replay, the full distributed reactor, deployment manifests, and aggregate SBOM generation. Publication remains an authorized action through the protected release workflow.
 
-## Prerequisites
+</details>
 
-- Java 21
-- Rancher Desktop using the Moby engine, or another Docker-compatible runtime
+---
 
-The Maven wrapper downloads the pinned Maven version automatically.
-
-## Build images and render a deployment
-
-Build and inspect both Linux images through the Docker-compatible engine:
+## 🧪 Testing and load
 
 ```powershell
-.\scripts\build-images.ps1 -Registry flowforge -Tag local
+.\mvnw.cmd verify                                   # unit, architecture, migration, and integration tests
+.\scripts\run-load-test.ps1 -Profile smoke          # against a running distributed topology
+.\scripts\run-load-topology.ps1 -Topology balanced-2x2-6p -Profile smoke   # build, start, measure, clean up
+.\scripts\verify-observability.ps1                  # Prometheus rules, alerts, and Compose profile
 ```
 
-The builder accepts the active JDK truststore as an ephemeral BuildKit secret so
-corporate TLS trust can be used without entering the output image. Production
-credentials and runtime trust are supplied only through Kubernetes Secret
-references. Lint and render the deployment contract with:
+Integration tests use PostgreSQL, Kafka, and Redis Testcontainers and are skipped when no Docker-compatible
+runtime is available. The [load-testing guide](load-testing/README.md) covers smoke, overload, soak, and scheduled
+profiles and the JSON report contract.
 
-```powershell
-helm lint .\deploy\helm\flowforge --strict
-helm template flowforge .\deploy\helm\flowforge --namespace flowforge
-```
+The `production` profile enables Kafka, outbox publication, command dispatch, result consumption, scheduling,
+coordination, and JWT security, and disables the in-process dispatcher. Startup validation rejects incomplete
+execution topologies and missing security configuration. To export traces to the local collector, set
+`$env:FLOWFORGE_OTLP_ENABLED = 'true'` before starting each application.
 
-See the [Helm deployment guide](deploy/helm/flowforge/README.md) for the required
-external Secret contract, digest-pinned installation, autoscaling constraints,
-rollout verification, and rollback commands.
+---
 
-## Run locally
+## ⚙️ Configuration
 
-Start PostgreSQL, Kafka, and Redis:
+All settings are environment variables with sensible local defaults.
 
-```powershell
-docker compose up -d postgres kafka redis
-```
-
-Run the control plane in its production Kafka topology:
-
-```powershell
-$env:JAVA_HOME = 'C:\path\to\jdk-21'
-$env:SPRING_PROFILES_ACTIVE = 'production'
-$env:FLOWFORGE_SECURITY_ENABLED = 'false' # local development only
-.\mvnw.cmd -pl flowforge-control-plane -am spring-boot:run
-```
-
-The `production` profile enables Kafka, outbox publication, command dispatch, result consumption, and JWT security, and disables the Phase 2 in-process dispatcher. Startup validation rejects incomplete execution topologies and missing security configuration. The example explicitly disables authentication only for a local topology without an identity provider.
-
-For an authenticated deployment, leave security enabled and configure the trusted issuer and its JWK endpoint:
-
-```powershell
-$env:FLOWFORGE_OIDC_ISSUER_URI = 'https://identity.example.com/realms/flowforge'
-$env:FLOWFORGE_OIDC_JWK_SET_URI = 'https://identity.example.com/realms/flowforge/protocol/openid-connect/certs'
-```
-
-Run a worker in a second terminal (it uses the same local PostgreSQL service by default, with an independent Flyway history table):
-
-```powershell
-$env:SPRING_PROFILES_ACTIVE = 'production'
-.\mvnw.cmd -pl flowforge-worker -am spring-boot:run
-```
-
-Start the versioned local observability stack:
-
-```powershell
-docker compose --profile observability up -d prometheus grafana otel-collector
-```
-
-Prometheus is available at `http://localhost:9090` and the provisioned FlowForge dashboard at `http://localhost:3000`. The services scrape the control plane and worker from ports `8080` and `8081`. To send sampled traces to the local collector, set `$env:FLOWFORGE_OTLP_ENABLED = 'true'` before starting each application; trace export remains optional and metrics continue to use Prometheus pull semantics.
-
-Validate Prometheus syntax, alert behavior, and the Compose profile with the pinned image:
-
-```powershell
-.\scripts\verify-observability.ps1
-```
-
-Run all tests:
-
-```powershell
-.\mvnw.cmd verify
-```
-
-Run the bounded distributed smoke workload after starting the production topology:
-
-```powershell
-.\scripts\run-load-test.ps1 -Profile smoke
-```
-
-Or let the managed runner build, start, measure, reconcile, and clean up a named topology:
-
-```powershell
-.\scripts\run-load-topology.ps1 -Topology balanced-2x2-6p -Profile smoke
-```
-
-The [load-testing guide](load-testing/README.md) documents the smoke, overload, soak, and scheduled profiles, JSON report contract, and threshold exit behavior.
-
-Infrastructure integration tests use PostgreSQL, Kafka, and Redis Testcontainers. They are skipped when a Docker-compatible runtime is unavailable; all other tests still run.
-
-Operational procedures are in the [Phase 4 reliability runbook](docs/operations/phase-4-reliability-runbook.md), [Phase 5 scheduling and coordination runbook](docs/operations/phase-5-scheduling-coordination-runbook.md), [Phase 6 SLO and alerting runbook](docs/operations/phase-6-slo-alerting-runbook.md), and [Phase 6 observability/capacity/resilience runbook](docs/operations/phase-6-observability-capacity-resilience-runbook.md). Deployment and rollback are documented in the [Helm deployment guide](deploy/helm/flowforge/README.md). Secret handling, redaction, audit, and retention are defined in the [security policy](docs/security/secret-and-audit-policy.md). The final telemetry and scaling design is recorded in [ADR-006](docs/adr/006-observability-scalability-and-resilience.md).
-
-## Configuration
+<details>
+<summary><b>Show all environment variables</b></summary>
 
 | Environment variable | Default |
 |---|---|
@@ -317,7 +650,11 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 | `PORT` | `8080` |
 | `WORKER_PORT` | `8081` |
 
-## Delivery and scaling
+</details>
+
+---
+
+## 📦 Delivery guarantees and scaling
 
 - Task commands are keyed by task execution ID so retries for one task stay ordered while unrelated tasks spread across worker partitions.
 - Task results and execution events are keyed by workflow execution ID so one workflow's state changes remain ordered.
@@ -332,7 +669,9 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 - PostgreSQL serializes authoritative permit capacity per resource. Redis stores only an expiring, atomically maintained mirror; loss or eviction can reduce coordination efficiency but cannot grant capacity beyond the durable ledger.
 - Concurrency limits belong to immutable workflow versions. Active PostgreSQL execution and attempt state is checked under the same resource lock as permit acquisition, so expired or missing Redis entries cannot oversubscribe a limit.
 
-## API
+---
+
+## API reference
 
 | Method | Path | Description |
 |---|---|---|
@@ -343,6 +682,7 @@ Operational procedures are in the [Phase 4 reliability runbook](docs/operations/
 | `POST` | `/api/v1/workflows/{id}/publish` | Publish the current draft |
 | `DELETE` | `/api/v1/workflows/{id}` | Archive without deleting history |
 | `POST` | `/api/v1/workflows/{id}/executions` | Start an idempotent execution of the latest published version |
+| `GET` | `/api/v1/executions` | List executions; optional `status`, `page`, `size` |
 | `GET` | `/api/v1/executions/{id}` | Inspect workflow state, tasks, attempts, and events |
 | `POST` | `/api/v1/executions/{id}/cancel` | Request cancellation |
 | `POST` | `/api/v1/schedules` | Create a one-time or cron schedule |
@@ -405,14 +745,40 @@ Example request:
 }
 ```
 
-## Architecture
+---
 
-- `flowforge-domain`: pure Java definition invariants, execution state machines, DAG policy, and schedule models
-- `flowforge-application`: workflow, execution, and scheduling use cases with outbound repository ports
-- `flowforge-messaging`: versioned commands, results, events, and shared topic names
-- `flowforge-kafka-support`: shared bounded-retry, broker-confirmed DLQ publication, metadata, and recovery metrics
-- `flowforge-control-plane`: Spring Boot HTTP, PostgreSQL, transactional-outbox, and Kafka adapters
-- `flowforge-worker`: independently deployable Spring Boot worker process
-- `flowforge-load-test`: packaged Java 21 fan-out/fan-in load generator with thresholded JSON reports
+## 🗂 Project layout
 
-See the [project roadmap](docs/ROADMAP.md), [Phase 7 implementation plan](docs/PHASE_7_PLAN.md), [release acceptance matrix](docs/operations/phase-7-release-acceptance.md), [release pipeline guide](docs/operations/release-pipeline.md), [Phase 7 recovery runbook](docs/operations/phase-7-recovery-runbook.md), [incident and DLQ replay runbook](docs/operations/phase-7-incident-and-dlq-replay-runbook.md), [upgrade and credential-rotation runbook](docs/operations/phase-7-upgrade-and-credential-rotation-runbook.md), [Phase 6 operations runbook](docs/operations/phase-6-observability-capacity-resilience-runbook.md), [resilience evidence](docs/resilience/README.md), and [architecture decisions](docs/adr/) for phase status, operations, and major design decisions.
+| Module | Responsibility |
+|---|---|
+| `flowforge-domain` | Pure Java invariants, execution state machines, DAG policy, schedule models |
+| `flowforge-application` | Workflow, execution, and scheduling use cases with outbound ports |
+| `flowforge-messaging` | Versioned Kafka commands, results, events, and topic names |
+| `flowforge-kafka-support` | Bounded retry, broker-confirmed DLQ publication, recovery metrics |
+| `flowforge-observability` | Shared logging, metrics, and tracing support |
+| `flowforge-control-plane` | Spring Boot HTTP API, web UI, PostgreSQL, outbox, scheduler, Kafka adapters |
+| `flowforge-worker` | Independently deployable task-execution service |
+| `flowforge-load-test` | Fan-out/fan-in load generator with thresholded JSON reports |
+
+---
+
+## 📚 Documentation
+
+| Topic | Where |
+|---|---|
+| Roadmap and phase plans | [docs/ROADMAP.md](docs/ROADMAP.md), [docs/PHASE_7_PLAN.md](docs/PHASE_7_PLAN.md) |
+| Architecture decisions | [docs/adr/](docs/adr/) |
+| Endpoint code flows | [documentation/](documentation/) |
+| Deployment and rollback | [Helm deployment guide](deploy/helm/flowforge/README.md) |
+| Operations runbooks | [Reliability](docs/operations/phase-4-reliability-runbook.md) · [Scheduling](docs/operations/phase-5-scheduling-coordination-runbook.md) · [SLOs & alerts](docs/operations/phase-6-slo-alerting-runbook.md) · [Capacity & resilience](docs/operations/phase-6-observability-capacity-resilience-runbook.md) · [Recovery](docs/operations/phase-7-recovery-runbook.md) · [Incidents & DLQ replay](docs/operations/phase-7-incident-and-dlq-replay-runbook.md) · [Upgrades & credential rotation](docs/operations/phase-7-upgrade-and-credential-rotation-runbook.md) |
+| Release | [Acceptance matrix](docs/operations/phase-7-release-acceptance.md) · [Release pipeline](docs/operations/release-pipeline.md) |
+| Security | [Secret and audit policy](docs/security/secret-and-audit-policy.md) |
+| Performance and resilience evidence | [Capacity model](docs/performance/CAPACITY_MODEL.md) · [Resilience](docs/resilience/README.md) · [Load testing](load-testing/README.md) |
+
+<div align="center">
+
+**Built with ☕ Java 21, Spring Boot, PostgreSQL, Kafka, and Redis.**
+
+If FlowForge helps you, consider giving it a ⭐
+
+</div>
