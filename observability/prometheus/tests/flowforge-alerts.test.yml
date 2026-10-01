@@ -24,7 +24,7 @@ tests:
               summary: FlowForge API availability is consuming error budget rapidly
               description: Environment production is burning the 99.9% API availability budget at a paging rate.
               action: Check control-plane errors and dependency health, then stop unsafe traffic if the burn continues.
-              runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
+              runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
 
   - name: stalled control-plane outbox pages only after persistence threshold
     interval: 30s
@@ -48,4 +48,4 @@ tests:
               summary: Control-plane events are stalled in the transactional outbox
               description: Pending control-plane messages in production are older than 60 seconds.
               action: Check Kafka availability and outbox publisher errors; preserve rows and allow idempotent replay.
-              runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
+              runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-4-reliability-runbook.md

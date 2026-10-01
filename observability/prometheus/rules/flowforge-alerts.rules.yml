@@ -19,7 +19,7 @@ groups:
           summary: FlowForge API availability is consuming error budget rapidly
           description: "Environment {{ $labels.environment }} is burning the 99.9% API availability budget at a paging rate."
           action: Check control-plane errors and dependency health, then stop unsafe traffic if the burn continues.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
 
       - alert: FlowForgeApiAvailabilityBudgetRisk
         expr: |
@@ -37,7 +37,7 @@ groups:
           summary: FlowForge API availability budget is at risk
           description: "Environment {{ $labels.environment }} has a sustained API availability error-budget burn."
           action: Review the slow-burn error mix and schedule remediation before the 30-day budget is exhausted.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#api-availability
 
       - alert: FlowForgeWorkflowStartLatencyFastBurn
         expr: |
@@ -55,7 +55,7 @@ groups:
           summary: Workflow starts are consuming latency budget rapidly
           description: "Successful workflow starts in {{ $labels.environment }} are exceeding one second at a paging burn rate."
           action: Inspect request latency, database contention, admission pressure, and outbox health.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#workflow-start-latency
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#workflow-start-latency
 
       - alert: FlowForgeWorkflowStartLatencyBudgetRisk
         expr: |
@@ -73,7 +73,7 @@ groups:
           summary: Workflow-start latency budget is at risk
           description: "Environment {{ $labels.environment }} has a sustained workflow-start latency budget burn."
           action: Compare latency with database, admission, and outbox signals and plan capacity or query remediation.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#workflow-start-latency
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#workflow-start-latency
 
       - alert: FlowForgeTaskQueueLatencyBreach
         expr: flowforge:sli_task_queue_oldest:seconds > 30
@@ -86,7 +86,7 @@ groups:
           summary: A ready task has waited longer than the queue objective
           description: "The oldest ready task in {{ $labels.environment }} has exceeded 30 seconds for five minutes."
           action: Check workers, Kafka delivery, admission pressure, and execution permits before increasing capacity.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#task-queue-latency
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#task-queue-latency
 
       - alert: FlowForgeTerminalCompletionBreach
         expr: flowforge:sli_terminal_oldest_active:seconds > 900
@@ -99,7 +99,7 @@ groups:
           summary: An active workflow has exceeded the terminal-completion objective
           description: "The oldest active workflow in {{ $labels.environment }} has exceeded 15 minutes for five minutes."
           action: Trace the oldest active execution through task, retry, timeout, outbox, and worker signals.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#terminal-completion
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#terminal-completion
 
   - name: flowforge-symptom-alerts
     interval: 30s
@@ -115,7 +115,7 @@ groups:
           summary: A FlowForge service cannot be scraped
           description: "Prometheus cannot reach {{ $labels.job }} instance {{ $labels.instance }}."
           action: Confirm the process, port, network path, and dependency startup health before restarting it.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#dependency-or-service-loss
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#dependency-or-service-loss
 
       - alert: FlowForgeControlPlaneOutboxStalled
         expr: flowforge_outbox_pending > 0 and flowforge_outbox_oldest_age_seconds > 60
@@ -127,7 +127,7 @@ groups:
           summary: Control-plane events are stalled in the transactional outbox
           description: "Pending control-plane messages in {{ $labels.environment }} are older than 60 seconds."
           action: Check Kafka availability and outbox publisher errors; preserve rows and allow idempotent replay.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-4-reliability-runbook.md
 
       - alert: FlowForgeWorkerResultOutboxStalled
         expr: flowforge_worker_results_pending > 0 and flowforge_worker_results_oldest_age_seconds > 60
@@ -139,7 +139,7 @@ groups:
           summary: Worker results are stalled in the transactional outbox
           description: "Pending worker results in {{ $labels.environment }} are older than 60 seconds."
           action: Check Kafka availability and result publisher errors; do not delete durable pending records.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-4-reliability-runbook.md
 
       - alert: FlowForgeScheduleBacklogAging
         expr: flowforge_schedules_pending > 0 and flowforge_schedules_pending_current_oldest_age_seconds > 60
@@ -151,7 +151,7 @@ groups:
           summary: Durable schedule triggers are falling behind
           description: "The oldest pending schedule trigger in {{ $labels.environment }} is older than 60 seconds."
           action: Check scheduler leadership, database locks, admission pressure, and schedule dispatch throughput.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
 
       - alert: FlowForgeRetryExhaustionSpike
         expr: sum by (environment) (increase(flowforge_retries_exhausted_total[15m])) > 0
@@ -162,7 +162,7 @@ groups:
           summary: One or more task retries were exhausted
           description: "Retries were exhausted in {{ $labels.environment }} during the last 15 minutes."
           action: Inspect failed attempts and dependency errors, then replay only through supported idempotent paths.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-4-reliability-runbook.md
 
       - alert: FlowForgeTaskTimeoutSpike
         expr: sum by (environment) (rate(flowforge_timeouts_tasks_total[10m])) > 0.1
@@ -174,7 +174,7 @@ groups:
           summary: Task timeouts are elevated
           description: "Task timeouts in {{ $labels.environment }} exceed 0.1 per second over ten minutes."
           action: Compare worker processing duration with task timeout policy and downstream dependency latency.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-4-reliability-runbook.md
 
       - alert: FlowForgeDeadLetterTraffic
         expr: |
@@ -187,7 +187,7 @@ groups:
           summary: FlowForge produced dead-letter traffic
           description: "At least one application or transport message entered a dead-letter path in {{ $labels.environment }}."
           action: Classify the poison message, preserve its identifiers, fix the cause, and use the documented replay path.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-4-reliability-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-4-reliability-runbook.md
 
       - alert: FlowForgeCoordinationPermitLeak
         expr: |
@@ -203,7 +203,7 @@ groups:
           summary: Active coordination permits exceed active durable work
           description: "Permits in {{ $labels.environment }} have exceeded active workflows plus running tasks for ten minutes."
           action: Check permit expiry, fencing, and reconciler activity before manually changing coordination rows.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
 
       - alert: FlowForgeAdmissionSaturation
         expr: |
@@ -218,7 +218,7 @@ groups:
           summary: FlowForge admission controls are actively limiting work
           description: "Admission throttling, saturation, or rejection persisted in {{ $labels.environment }}."
           action: Identify the constrained queue or permit scope and reduce intake before scaling the measured bottleneck.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
 
       - alert: FlowForgeRedisCoordinationFailures
         expr: sum by (environment) (increase(flowforge_coordination_redis_failures_total[10m])) > 0
@@ -230,7 +230,7 @@ groups:
           summary: Redis coordination operations are failing
           description: "Redis coordination failures occurred in {{ $labels.environment }} during the last ten minutes."
           action: Check Redis connectivity and verify PostgreSQL-backed correctness remains healthy while cache coordination degrades.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-5-scheduling-coordination-runbook.md
 
       - alert: FlowForgePrometheusRuleEvaluationFailures
         expr: increase(prometheus_rule_evaluation_failures_total[10m]) > 0
@@ -242,4 +242,4 @@ groups:
           summary: Prometheus failed to evaluate FlowForge rules
           description: "Prometheus rule evaluation failures increased on {{ $labels.instance }}."
           action: Run promtool against the checked-in rules and inspect Prometheus rule evaluation errors.
-          runbook_url: https://github.sec.samsung.net/i-somasekhar/Workflows/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#prometheus-rule-health
+          runbook_url: https://github.com/RAVImitte/FlowForge/blob/main/docs/operations/phase-6-slo-alerting-runbook.md#prometheus-rule-health
